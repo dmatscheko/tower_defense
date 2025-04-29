@@ -23,6 +23,10 @@
 </head>
 <body>
   <canvas id="gameCanvas" width="1200" height="700"></canvas>
+  <audio id="backgroundAudio" loop preload="auto">
+    <source src="sound/static_rumble.mp3" type="audio/mpeg">
+    Your browser does not support the audio element.
+  </audio>
   <script type="module">
     // Game constants for settings and tower properties
     const CONSTANTS = {
@@ -259,12 +263,14 @@
             // Deal direct damage
             target.health -= this.spec.damage;
             this.game.effects.add('laser', { startX: tx, startY: ty, endX: target.position.x, endY: target.position.y }, 100);
+            this.game.playSound('laser_shot'); // Play laser sound
             break;
           case 'slow':
             // Apply slow effect
             target.slowFactor = this.spec.slowFactor;
             target.slowEnd = gameTime + this.spec.slowDuration;
             this.game.effects.add('slowAura', { x: target.position.x, y: target.position.y }, 100);
+            this.game.playSound('slow_effect'); // Play slow effect sound
             break;
           case 'area':
             // Damage all targets in range
@@ -274,11 +280,13 @@
               radiusX: this.spec.range * CONSTANTS.TILE.WIDTH / 2, 
               radiusY: this.spec.range * CONSTANTS.TILE.HEIGHT / 2 
             }, 200);
+            this.game.playSound('area_blast'); // Play area blast sound
             break;
           case 'dot':
             // Apply damage-over-time
             target.dot = { damage: this.spec.dotDamage, end: gameTime + this.spec.dotDuration };
             this.game.effects.add('dotIndicator', { x: target.position.x, y: target.position.y }, 200);
+            this.game.playSound('dot_effect'); // Play DoT effect sound
             break;
         }
         this.lastShot = gameTime;
@@ -552,18 +560,109 @@
         // Initialize canvas and context
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
-        this.offsetX = 600;             // Grid offset X
-        this.offsetY = 0;               // Grid offset Y
-        this.ui = new UIManager(this);  // UI manager
+        this.offsetX = 600; // Grid offset X
+        this.offsetY = 0;   // Grid offset Y
+        this.ui = new UIManager(this); // UI manager
+
+        // Initialize Web Audio API for sound effects and background audio
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        // Gain node for background audio (low volume static + rumbling)
+        this.backgroundGain = this.audioContext.createGain();
+        this.backgroundGain.gain.setValueAtTime(0.1, this.audioContext.currentTime); // 10% volume
+        this.backgroundGain.connect(this.audioContext.destination);
+        // Gain node for sound effects
+        this.effectGain = this.audioContext.createGain();
+        this.effectGain.gain.setValueAtTime(0.5, this.audioContext.currentTime); // 50% volume
+        this.effectGain.connect(this.audioContext.destination);
+        // Reference to background audio element
+        this.backgroundAudio = document.getElementById('backgroundAudio');
+        this.backgroundSource = null;
+        // Storage for sound effect audio buffers
+        this.soundEffects = {
+          laser_shot: null,
+          slow_effect: null,
+          area_blast: null,
+          dot_effect: null,
+          enemy_spawn: null,
+          tower_place: null
+        };
+
+        // Load audio files asynchronously
+        this.loadAudioFiles();
+
         // Initialize game state
         this.resetGame('full');
+
         // Setup event listeners
         this.setupEvents();
+
         // Start game loop
         requestAnimationFrame(this.loop.bind(this));
       }
+
+      // Load background and sound effect audio files
+      async loadAudioFiles() {
+        // Setup background audio
+        try {
+          this.backgroundSource = this.audioContext.createMediaElementSource(this.backgroundAudio);
+          this.backgroundSource.connect(this.backgroundGain);
+          this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
+        } catch (e) {
+          console.error('Error setting up background audio:', e);
+        }
+
+        // Load sound effect files
+        const soundFiles = [
+          { key: 'laser_shot', url: 'sound/laser_shot.mp3' },
+          { key: 'slow_effect', url: 'sound/slow_effect.mp3' },
+          { key: 'area_blast', url: 'sound/area_blast.mp3' },
+          { key: 'dot_effect', url: 'sound/dot_effect.mp3' },
+          { key: 'enemy_spawn', url: 'sound/enemy_spawn.mp3' },
+          { key: 'tower_place', url: 'sound/tower_place.mp3' },
+          { key: 'tower_remove', url: 'sound/tower_remove.mp3' },
+          { key: 'enemy_at_base', url: 'sound/enemy_at_base.mp3' }
+        ];
+
+        for (const { key, url } of soundFiles) {
+          try {
+            const response = await fetch(url);
+            const arrayBuffer = await response.arrayBuffer();
+            this.soundEffects[key] = await this.audioContext.decodeAudioData(arrayBuffer);
+          } catch (e) {
+            console.error(`Error loading sound effect ${key}:`, e);
+          }
+        }
+      }
+
+      // Play a sound effect using Web Audio API
+      playSound(key) {
+        const buffer = this.soundEffects[key];
+        if (buffer && this.audioContext.state === 'running') {
+          const source = this.audioContext.createBufferSource();
+          source.buffer = buffer;
+          source.connect(this.effectGain);
+          source.start(0);
+        }
+      }
+
+      // Resume audio context on user interaction (required by some browsers)
+      resumeAudioContext() {
+        if (this.audioContext.state === 'suspended') {
+          this.audioContext.resume().then(() => {
+            console.log('AudioContext resumes');
+            if (this.backgroundAudio.paused) {
+              this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
+            }
+          });
+        }
+      }
+
       // Reset game state based on mode: full, retry, or nextLevel
       resetGame(mode) {
+        // Pause background audio during reset
+        if (this.backgroundAudio) {
+          this.backgroundAudio.pause();
+        }
         Object.assign(this, {
           money: CONSTANTS.INITIAL_MONEY,
           baseHealth: CONSTANTS.BASE_HEALTH,
@@ -580,7 +679,7 @@
           hoveredTower: null,
           gameTime: 0,
           previousTime: 0,
-          speedMultiplier: 1
+          speedMultiplier: 1.5
         });
 
         // Mode-specific adjustments
@@ -602,7 +701,12 @@
 
         // Start initial wave
         this.startWave();
+        // Resume background audio after reset
+        if (this.audioContext.state === 'running') {
+          this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
+        }
       }
+
       // Create grid with streets, buildings, and base
       generateCity() {
         // Initialize grid with buildings
@@ -746,6 +850,7 @@
         while (this.spawnQueue.length && gameTime >= this.spawnQueue[0].time) {
           const spawn = this.spawnQueue.shift();
           this.enemies.push(new Enemy(spawn.pos, this, spawn.type));
+          this.playSound('enemy_spawn');
         }
         // Start new wave
         if (!this.waveActive && !this.enemies.length && gameTime - this.lastWaveTime > 5000) {
@@ -758,6 +863,7 @@
         this.enemies = this.enemies.filter(e => {
           if (e.reachedBase) {
             this.baseHealth -= e.damage;
+            this.playSound('enemy_at_base');
             return false;
           }
           if (e.health <= 0) {
@@ -778,10 +884,11 @@
         }
         this.effects.update(performance.now());
       }
-      // Handle mouse interactions
+      // Handle mouse interactions and audio context resumption
       setupEvents() {
         this.canvas.addEventListener('mousedown', e => {
-          // Get mouse position
+          // Resume audio context on first user interaction
+          this.resumeAudioContext();
           const x = e.clientX - this.canvas.getBoundingClientRect().left;
           const y = e.clientY - this.canvas.getBoundingClientRect().top;
           
@@ -809,15 +916,21 @@
                 }
                 // Research new tower
                 else if (x >= 700 && x < 850 && this.money >= 100 && 
-                         this.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length) {
+                           this.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length) {
                   this.unlockTower();
                   this.money -= 100;
                 }
                 // Toggle pause
                 else if (x >= 860 && x < 1010) {
                   this.gameState = this.gameState === 'paused' ? 'playing' : 'paused';
+                  // Pause/resume background audio with game state
+                  if (this.gameState === 'paused') {
+                    this.backgroundAudio.pause();
+                  } else {
+                    this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
+                  }
                 }
-                // Toggle speedup
+                // Toggle speedup 
                 else if (x >= 1020 && x < 1170) {
                   this.toggleSpeedup();
                 }
@@ -838,6 +951,7 @@
                 }
                 this.money -= CONSTANTS.TOWER_TYPES[this.selectedTower].cost;
                 this.enemies.forEach(e => e.updatePath());
+                this.playSound('tower_place'); // Play tower placement sound
               }
             }
           } else if (e.button === 2) { // Right click
@@ -849,6 +963,7 @@
                 this.money += Math.floor(CONSTANTS.TOWER_TYPES[this.towers[idx].type].cost / 2);
                 this.towers.splice(idx, 1);
                 this.enemies.forEach(e => e.updatePath());
+                this.playSound('tower_remove'); // Play tower remove sound
               }
             }
           }
@@ -875,7 +990,7 @@
                  y >= this.canvas.height / 2 + 50 && y <= this.canvas.height / 2 + 90)
              ? 'pointer' : 'default';
         });
-        // Prevent context menu
+        // Prevent context menu on right-click
         this.canvas.addEventListener('contextmenu', e => e.preventDefault());
       }
       // Unlock a random locked tower type
@@ -887,15 +1002,20 @@
           this.unlockedTowers.push(locked[index]);
         }
       }
-      // Toggle game speed between normal and 5x
+      // Toggle game speed between normal and 10x
       toggleSpeedup() {
         this.speedMultiplier = this.speedMultiplier > 2 ? 1.5 : 15;
       }
       // Main game loop
       loop(time) {
-        // Check for game over
+        // Check for game over and pause background audio
         if (this.baseHealth <= 0 && this.gameState === 'playing') {
           this.gameState = 'gameover';
+          this.backgroundAudio.pause();
+        }
+        // Pause background audio on win
+        if (this.gameState === 'win' && !this.backgroundAudio.paused) {
+          this.backgroundAudio.pause();
         }
         // Initialize previousTime on first frame
         if (this.previousTime === 0) this.previousTime = time;
