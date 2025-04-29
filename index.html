@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tiny Tower Defense</title>
+  <style>
+    /* Style canvas with a border */
+    canvas {
+      border: 1px solid black;
+    }
+    /* Center canvas and set background */
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #f0f0f0;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="1200" height="700"></canvas>
+  <script type="module">
+    // Game constants for settings and tower properties
+    const CONSTANTS = {
+      GRID_SIZE: 20,                  // Grid dimensions (20x20)
+      TILE: { WIDTH: 64, HEIGHT: 32 }, // Tile size in pixels
+      COLORS: {
+        STREET: 'gray',               // Street tile color
+        BUILDING: 'green',            // Building tile color
+        PARKING_LOT: 'gray',          // Parking lot tile color
+        BASE: 'yellow'                // Base tile color
+      },
+      TOWER_TYPES: [                  // Tower definitions
+        { name: 'Basic', cost: 50, range: 3, color: 'red', effect: 'damage', damage: 20, cooldown: 500 },
+        { name: 'Slow', cost: 75, range: 5, color: 'blue', effect: 'slow', slowFactor: 0.5, slowDuration: 2000, cooldown: 1000 },
+        { name: 'Area', cost: 100, range: 4, color: 'purple', effect: 'area', areaDamage: 10, cooldown: 1000 },
+        { name: 'DoT', cost: 100, range: 4, color: 'pink', effect: 'dot', dotDamage: 12, dotDuration: 40000, cooldown: 1000 }
+      ],
+      ENEMY_TYPES: [                  // Enemy definitions
+        { name: 'Basic', baseHealth: 100, healthPerLevel: 20, speed: 0.5, damage: 10, color: 'black', radius: 10, reward: 5, spawnMultiplier: 1.0 },
+        { name: 'Fast', baseHealth: 40, healthPerLevel: 10, speed: 1.0, damage: 5, color: 'red', radius: 7, reward: 3, spawnMultiplier: 3 },
+        { name: 'Tank', baseHealth: 2000, healthPerLevel: 700, speed: 0.3, damage: 20, color: 'blue', radius: 15, reward: 10, spawnMultiplier: 0.3 }
+      ],
+      INITIAL_MONEY: 150,             // Starting money
+      BASE_HEALTH: 100,               // Starting base health
+      UI: { HEIGHT: 92, Y: 608 }      // UI position and size
+    };
+
+    // Seeded random number generator (Linear Congruential Generator)
+    class SeededRandom {
+      constructor(seed) {
+        this.seed = seed;
+      }
+      // Generate next random number between 0 and 1
+      next() {
+        this.seed = (1664525 * this.seed + 1013904223) % 4294967296;
+        return this.seed / 4294967296;
+      }
+      // Generate random integer in range [min, max)
+      nextInt(min, max) {
+        return Math.floor(this.next() * (max - min)) + min;
+      }
+    }
+
+    // Utility functions for coordinate conversions and distance
+    const Utils = {
+      // Convert grid (i,j) to screen (x,y)
+      gridToScreen(i, j, offsetX, offsetY) {
+        return {
+          x: (i - j) * (CONSTANTS.TILE.WIDTH / 2) + offsetX,
+          y: (i + j) * (CONSTANTS.TILE.HEIGHT / 2) + offsetY
+        };
+      },
+      // Convert screen (x,y) to grid (i,j)
+      screenToGrid(x, y, offsetX, offsetY) {
+        x -= offsetX;
+        y -= offsetY;
+        const i = Math.round((x / (CONSTANTS.TILE.WIDTH / 2) + y / (CONSTANTS.TILE.HEIGHT / 2)) / 2);
+        const j = Math.round((y / (CONSTANTS.TILE.HEIGHT / 2) - x / (CONSTANTS.TILE.WIDTH / 2)) / 2);
+        return (i >= 0 && i < CONSTANTS.GRID_SIZE && j >= 0 && j < CONSTANTS.GRID_SIZE) ? { i, j } : null;
+      },
+      // Calculate Euclidean distance
+      distance(x1, y1, x2, y2) {
+        return Math.hypot(x2 - x1, y2 - y1);
+      }
+    };
+
+    // Manages visual effects (lasers, auras, pulses)
+    class EffectManager {
+      constructor() {
+        this.effects = []; // Array to store active effects
+      }
+      // Add new effect with type, properties, and duration
+      add(type, props, duration) {
+        this.effects.push({ type, ...props, startTime: performance.now(), duration });
+      }
+      // Remove expired effects
+      update(time) {
+        this.effects = this.effects.filter(e => time < e.startTime + e.duration);
+      }
+      // Render all active effects
+      draw(ctx) {
+        this.effects.forEach(e => {
+          const progress = (performance.now() - e.startTime) / e.duration;
+          ctx.save();
+          ctx.beginPath();
+          switch (e.type) {
+            case 'laser':
+              ctx.strokeStyle = 'red';
+              ctx.lineWidth = 2;
+              ctx.moveTo(e.startX, e.startY);
+              ctx.lineTo(e.endX, e.endY);
+              ctx.stroke();
+              break;
+            case 'slowAura':
+              ctx.ellipse(e.x, e.y, 15, 7.5, 0, 0, Math.PI * 2);
+              ctx.fillStyle = '#00f2';
+              ctx.fill();
+              break;
+            case 'areaPulse':
+              ctx.ellipse(e.x, e.y, e.radiusX * progress, e.radiusY * progress, 0, 0, Math.PI * 2);
+              ctx.strokeStyle = `rgba(128, 0, 128, ${1 - progress})`;
+              ctx.lineWidth = 3;
+              ctx.stroke();
+              break;
+            case 'dotIndicator':
+              ctx.arc(e.x, e.y, 5, 0, Math.PI * 2);
+              ctx.fillStyle = 'pink';
+              ctx.fill();
+              break;
+          }
+          ctx.restore();
+        });
+      }
+    }
+
+    // A* pathfinding for enemy movement
+    class Pathfinding {
+      // Manhattan distance heuristic
+      static heuristic(a, b) {
+        return Math.abs(a.i - b.i) + Math.abs(a.j - b.j);
+      }
+      // Get valid adjacent cells
+      static getNeighbors(node, grid, towers) {
+        return [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([di, dj]) => ({ i: node.i + di, j: node.j + dj }))
+          .filter(n => 
+            n.i >= 0 && n.i < CONSTANTS.GRID_SIZE && 
+            n.j >= 0 && n.j < CONSTANTS.GRID_SIZE &&
+            [CONSTANTS.COLORS.STREET, CONSTANTS.COLORS.PARKING_LOT, CONSTANTS.COLORS.BASE].includes(grid[n.i][n.j]) &&
+            !towers.some(t => t.i === n.i && t.j === n.j)
+          );
+      }
+      // Find shortest path using A* algorithm
+      static aStar(start, goal, grid, towers) {
+        const open = [start];
+        const cameFrom = new Map();
+        const gScore = new Map([[`${start.i},${start.j}`, 0]]);
+        const fScore = new Map([[`${start.i},${start.j}`, this.heuristic(start, goal)]]);
+        const key = n => `${n.i},${n.j}`;
+        
+        while (open.length) {
+          // Get node with lowest fScore
+          const current = open.sort((a, b) => fScore.get(key(a)) - fScore.get(key(b))).shift();
+          // Check if goal reached
+          if (current.i === goal.i && current.j === goal.j) {
+            // Reconstruct path
+            const path = [];
+            let node = current;
+            while (node) {
+              path.push(node);
+              node = cameFrom.get(key(node));
+            }
+            return path.reverse();
+          }
+          // Process neighbors
+          this.getNeighbors(current, grid, towers).forEach(neighbor => {
+            const nKey = key(neighbor);
+            const g = gScore.get(key(current)) + 1;
+            // Update scores if better path found
+            if (!gScore.has(nKey) || g < gScore.get(nKey)) {
+              cameFrom.set(nKey, current);
+              gScore.set(nKey, g);
+              fScore.set(nKey, g + this.heuristic(neighbor, goal));
+              if (!open.some(n => n.i === neighbor.i && n.j === neighbor.j)) {
+                open.push(neighbor);
+              }
+            }
+          });
+        }
+        return null; // No path found
+      }
+    }
+
+    // Represents a defensive tower
+    class Tower {
+      constructor(i, j, type, game) {
+        this.i = i;                   // Grid row
+        this.j = j;                   // Grid column
+        this.type = type;             // Tower type index
+        this.game = game;             // Game instance
+        this.spec = CONSTANTS.TOWER_TYPES[type]; // Tower specifications
+        this.lastShot = 0;            // Last shot timestamp
+      }
+      // Render tower with range circle
+      draw(ctx, alpha = 1, showRange = false) {
+        const { x, y } = Utils.gridToScreen(this.i, this.j, this.game.offsetX, this.game.offsetY);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        // Draw tower shape
+        ctx.beginPath();
+        ctx.moveTo(x, y - CONSTANTS.TILE.HEIGHT);
+        ctx.lineTo(x + CONSTANTS.TILE.WIDTH / 4, y);
+        ctx.lineTo(x, y + CONSTANTS.TILE.HEIGHT / 4);
+        ctx.lineTo(x - CONSTANTS.TILE.WIDTH / 4, y);
+        ctx.closePath();
+        ctx.fillStyle = this.spec.color;
+        ctx.fill();
+        // Draw left side of the tower (white with alpha)
+        ctx.beginPath();
+        ctx.moveTo(x, y - CONSTANTS.TILE.HEIGHT);
+        ctx.lineTo(x - CONSTANTS.TILE.WIDTH / 4, y);
+        ctx.lineTo(x, y + CONSTANTS.TILE.HEIGHT / 4);
+        ctx.closePath();
+        ctx.fillStyle = '#fff4';
+        ctx.fill();
+        // Draw range circle if requested
+        if (showRange) {
+          ctx.beginPath();
+          ctx.ellipse(x, y, 
+            this.spec.range * CONSTANTS.TILE.WIDTH / 2, 
+            this.spec.range * CONSTANTS.TILE.HEIGHT / 2, 
+            0, 0, Math.PI * 2
+          );
+          ctx.strokeStyle = '#8084';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+      // Apply tower effects to enemies in range
+      update(gameTime) {
+        // Check cooldown
+        if (gameTime - this.lastShot < this.spec.cooldown) return;
+        // Get tower position
+        const { x: tx, y: ty } = Utils.gridToScreen(this.i, this.j, this.game.offsetX, this.game.offsetY);
+        // Find targets in range
+        const targets = this.game.enemies
+          .filter(e => Utils.distance(tx, ty, e.position.x, e.position.y) <= this.spec.range * CONSTANTS.TILE.WIDTH / 2)
+          .sort((a, b) => Utils.distance(a.position.x, a.position.y, tx, ty) - Utils.distance(b.position.x, b.position.y, tx, ty));
+        if (!targets.length) return;
+        const target = targets[0];
+        // Apply tower effect
+        switch (this.spec.effect) {
+          case 'damage':
+            // Deal direct damage
+            target.health -= this.spec.damage;
+            this.game.effects.add('laser', { startX: tx, startY: ty, endX: target.position.x, endY: target.position.y }, 100);
+            break;
+          case 'slow':
+            // Apply slow effect
+            target.slowFactor = this.spec.slowFactor;
+            target.slowEnd = gameTime + this.spec.slowDuration;
+            this.game.effects.add('slowAura', { x: target.position.x, y: target.position.y }, 100);
+            break;
+          case 'area':
+            // Damage all targets in range
+            targets.forEach(e => e.health -= this.spec.areaDamage);
+            this.game.effects.add('areaPulse', { 
+              x: tx, y: ty, 
+              radiusX: this.spec.range * CONSTANTS.TILE.WIDTH / 2, 
+              radiusY: this.spec.range * CONSTANTS.TILE.HEIGHT / 2 
+            }, 200);
+            break;
+          case 'dot':
+            // Apply damage-over-time
+            target.dot = { damage: this.spec.dotDamage, end: gameTime + this.spec.dotDuration };
+            this.game.effects.add('dotIndicator', { x: target.position.x, y: target.position.y }, 200);
+            break;
+        }
+        this.lastShot = gameTime;
+      }
+    }
+
+    // Represents an enemy moving towards the base
+    class Enemy {
+      constructor(spawn, game, type) {
+        this.game = game;             // Game instance
+        this.type = type;             // Enemy type index
+        const enemySpec = CONSTANTS.ENEMY_TYPES[type];
+        this.maxHealth = enemySpec.baseHealth +
+                         enemySpec.healthPerLevel * (game.levelNumber - 1) +
+                         game.waveInLevel * 8;
+        this.health = this.maxHealth;
+        this.baseSpeed = enemySpec.speed * CONSTANTS.TILE.WIDTH / 1000;
+        this.speed = this.baseSpeed;
+        this.damage = enemySpec.damage;
+        this.color = enemySpec.color;
+        this.radius = enemySpec.radius;
+        this.reward = enemySpec.reward;
+        // Calculate initial path
+        this.path = Pathfinding.aStar(spawn, { i: 10, j: 10 }, game.grid, game.towers) || [];
+        this.index = 0;               // Current path index
+        this.reachedBase = !this.path.length; // Flag for reaching base
+        // Set initial position
+        this.position = Utils.gridToScreen(spawn.i, spawn.j, game.offsetX, game.offsetY);
+        // Set initial target
+        this.target = this.path[1] 
+          ? Utils.gridToScreen(this.path[1].i, this.path[1].j, game.offsetX, game.offsetY) 
+          : this.position;
+        this.slowFactor = 1;          // Speed multiplier
+        this.slowEnd = 0;             // Slow effect end time
+        this.dot = null;              // Damage-over-time effect
+      }
+      // Draw enemy with health bar and status effects
+      draw(ctx) {
+        ctx.save();
+        // Calculate movement direction
+        const dx = this.target.x - this.position.x;
+        const dy = this.target.y - this.position.y;
+        const angle = Math.atan2(dy, dx);
+        // Draw enemy body
+        ctx.beginPath();
+        ctx.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+        // Draw brighter part of body
+        const offsetX = -0.3 * this.radius;
+        const offsetY = -0.2 * this.radius;
+        const brightRadius = 0.7 * this.radius;
+        ctx.beginPath();
+        ctx.arc(this.position.x + offsetX, this.position.y + offsetY, brightRadius, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff2';
+        ctx.fill();
+        // Draw two white elliptical eyes looking in walking direction
+        ctx.save();
+        ctx.translate(this.position.x, this.position.y);
+        ctx.rotate(angle);
+        const eyeOffsetX = 0.4 * this.radius;
+        const eyeOffsetY = 0.3 * this.radius;
+        const eyeWidth = 0.3 * this.radius;
+        const eyeHeight = 0.2 * this.radius;
+        // Left eye (relative to direction)
+        ctx.beginPath();
+        ctx.ellipse(eyeOffsetX, -eyeOffsetY, eyeWidth, eyeHeight, 0, 0, Math.PI * 2);
+        ctx.fillStyle = 'white';
+        ctx.fill();
+        // Right eye
+        ctx.beginPath();
+        ctx.ellipse(eyeOffsetX, eyeOffsetY, eyeWidth, eyeHeight, 0, 0, Math.PI * 2);
+        ctx.fillStyle = 'white';
+        ctx.fill();
+        ctx.restore();
+        // Draw health bar
+        const barWidth = 2 * this.radius;
+        const barX = this.position.x - barWidth / 2;
+        const barY = this.position.y - this.radius - 5;
+        ctx.fillStyle = '#ccc';
+        ctx.fillRect(barX, barY, barWidth, 5);
+        ctx.fillStyle = '#0f0';
+        ctx.fillRect(barX, barY, barWidth * Math.max(0, this.health / this.maxHealth), 5);
+        ctx.restore();
+        // Add slow effect visuals
+        if (this.slowEnd > this.game.gameTime) {
+          this.game.effects.add('slowAura', { x: this.position.x, y: this.position.y }, 50);
+        }
+        // Add DoT effect visuals
+        if (this.dot && this.game.gameTime < this.dot.end && this.game.random.next() < 0.1) {
+          this.game.effects.add('dotIndicator', { x: this.position.x, y: this.position.y }, 200);
+        }
+      }
+      // Draw enemy's path to base
+      drawPath(ctx) {
+        if (this.path.length < 2) return;
+        ctx.save();
+        // Set dashed line style
+        ctx.beginPath();
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = '#f002';
+        ctx.lineWidth = 2;
+        // Start at the position before the base
+        const lastPoint = Utils.gridToScreen(this.path[this.path.length - 2].i, this.path[this.path.length - 2].j, this.game.offsetX, this.game.offsetY);
+        ctx.moveTo(lastPoint.x, lastPoint.y);
+        // Draw path segments up to but not including the base
+        for (let i = this.path.length - 3; i >= this.index; i--) {
+          const point = Utils.gridToScreen(this.path[i].i, this.path[i].j, this.game.offsetX, this.game.offsetY);
+          ctx.lineTo(point.x, point.y);
+        }
+        // Connect to current position
+        ctx.lineTo(this.position.x, this.position.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+      // Update path to base
+      updatePath() {
+        // Get current grid position
+        const currentGridPos = Utils.screenToGrid(
+          this.position.x, 
+          this.position.y, 
+          this.game.offsetX, 
+          this.game.offsetY
+        );
+        // Validate position
+        if (!currentGridPos || !['gray'].includes(this.game.grid[currentGridPos.i][currentGridPos.j])) {
+          this.reachedBase = true;
+          this.path = [];
+          return;
+        }
+        // Recalculate path
+        this.path = Pathfinding.aStar(currentGridPos, { i: 10, j: 10 }, this.game.grid, this.game.towers) || [];
+        this.index = 0;
+        this.reachedBase = !this.path.length;
+        // Update target
+        this.target = this.path[1]
+          ? Utils.gridToScreen(this.path[1].i, this.path[1].j, this.game.offsetX, this.game.offsetY)
+          : this.position;
+      }
+      // Update enemy position and status
+      update(gameTime, gameDeltaTime) {
+        if (this.game.gameState === 'paused' || this.reachedBase) return;
+        // Apply DoT (damage per second)
+        if (this.dot && gameTime < this.dot.end) {
+          this.health -= this.dot.damage * (gameDeltaTime / 1000);
+        }
+        // Update speed based on slow effect
+        this.speed = this.baseSpeed * Math.max(0.1, gameTime > this.slowEnd ? 1 : this.slowFactor);
+        // Calculate movement
+        const moveDist = this.speed * gameDeltaTime;
+        const dx = this.target.x - this.position.x;
+        const dy = this.target.y - this.position.y;
+        // Check if reached target
+        if (Utils.distance(0, 0, dx, dy) <= moveDist) {
+          this.index++;
+          if (this.index >= this.path.length) {
+            this.reachedBase = true;
+            return;
+          }
+          this.position = { ...this.target };
+          this.target = Utils.gridToScreen(this.path[this.index].i, this.path[this.index].j, this.game.offsetX, this.game.offsetY);
+        } else {
+          // Move towards target
+          const angle = Math.atan2(dy, dx);
+          this.position.x += Math.cos(angle) * moveDist;
+          this.position.y += Math.sin(angle) * moveDist;
+        }
+      }
+    }
+
+    // Manages user interface elements
+    class UIManager {
+      constructor(game) {
+        this.game = game; // Game instance
+      }
+      // Render UI: stats, tower selection, buttons
+      draw(ctx) {
+        // Draw UI background
+        ctx.fillStyle = '#ccc';
+        ctx.fillRect(0, CONSTANTS.UI.Y, this.game.canvas.width, CONSTANTS.UI.HEIGHT);
+        // Draw game stats
+        ctx.fillStyle = 'black';
+        ctx.font = '20px Arial';
+        ctx.fillText(`Money: ${this.game.money}`, 10, 640);
+        ctx.fillText(`Base Health: ${this.game.baseHealth}`, 10, 670);
+        ctx.fillText(`Level: ${this.game.levelNumber} Wave: ${(this.game.waveInLevel > 0) ? this.game.waveInLevel : '1'}`, 200, 640);
+        ctx.fillText(`Enemies Left: ${this.game.enemies.length + this.game.spawnQueue.length}`, 200, 670);
+        // Draw tower selection
+        CONSTANTS.TOWER_TYPES.forEach((t, i) => {
+          const x = 400 + i * 60;
+          const iconX = x + 25; // Center of 50x50 icon
+          const iconY = 655;    // Center of 50x50 icon (630 + 50/2)
+          // Draw square background
+          ctx.fillStyle = '#eee';
+          ctx.fillRect(x, 630, 50, 50);
+          // Draw tower shape
+          ctx.save();
+          ctx.translate(iconX, iconY+11);
+          // Create temporary tower with adjusted offset
+          const tempTower = new Tower(0, 0, i, {
+            ...this.game, offsetX: 0, offsetY: 0
+          });
+          tempTower.draw(ctx, 1, false);
+          ctx.restore();
+          // Highlight selected/unlocked towers
+          ctx.strokeStyle = this.game.unlockedTowers.includes(i) 
+            ? (this.game.selectedTower === i ? 'yellow' : 'black') 
+            : 'gray';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, 630, 50, 50);
+          // Draw tower info
+          ctx.fillStyle = this.game.unlockedTowers.includes(i) ? 'black' : 'gray';
+          ctx.font = '12px Arial';
+          ctx.fillText(`${t.name} (${t.cost})`, x, 691);
+        });
+        // Draw buttons
+        this.drawButton(ctx, 700, 'Research (100)', this.game.money >= 100 && 
+          this.game.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length);
+        this.drawButton(ctx, 860, this.game.gameState === 'paused' ? 'Resume' : 'Pause', true);
+        this.drawButton(ctx, 1020, this.game.speedMultiplier > 2 ? 'Speed x10  >>' : 'Speed x10', true);
+      }
+      // Render a clickable button
+      drawButton(ctx, x, text, enabled) {
+        ctx.fillStyle = enabled ? '#eee' : 'gray';
+        ctx.fillRect(x, 630, 150, 50);
+        ctx.fillStyle = 'black';
+        ctx.font = '16px Arial';
+        ctx.fillText(text, x + 10, 660);
+      }
+      // Show tower placement preview
+      drawPreview(ctx) {
+        if (this.game.selectedTower === null || !this.game.cursorPos) return;
+        const { i, j } = this.game.cursorPos;
+        // Draw preview if placement is valid
+        if (this.game.canPlaceTower(i, j) && this.game.money >= CONSTANTS.TOWER_TYPES[this.game.selectedTower].cost) {
+          new Tower(i, j, this.game.selectedTower, this.game).draw(ctx, 0.7, true);
+        }
+      }
+      // Render win screen
+      drawWinScreen(ctx) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(0, 0, this.game.canvas.width, this.game.canvas.height);
+        ctx.fillStyle = 'white';
+        ctx.font = '40px Arial';
+        ctx.fillText('You Win!', this.game.canvas.width / 2 - 100, this.game.canvas.height / 2 - 20);
+        ctx.font = '20px Arial';
+        ctx.fillText('Click to proceed to next level', this.game.canvas.width / 2 - 150, this.game.canvas.height / 2 + 20);
+      }
+      // Render game over screen
+      drawGameOverScreen(ctx) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(0, 0, this.game.canvas.width, this.game.canvas.height);
+        ctx.fillStyle = 'white';
+        ctx.font = '40px Arial';
+        ctx.fillText('Game Over', this.game.canvas.width / 2 - 120, this.game.canvas.height / 2 - 20);
+        ctx.font = '20px Arial';
+        ctx.fillText('Click to restart', this.game.canvas.width / 2 - 80, this.game.canvas.height / 2 + 20);
+        // Draw retry button
+        ctx.fillStyle = '#eee';
+        ctx.fillRect(this.game.canvas.width / 2 - 80, this.game.canvas.height / 2 + 50, 160, 40);
+        ctx.fillStyle = 'black';
+        ctx.font = '16px Arial';
+        ctx.fillText('Retry Level', this.game.canvas.width / 2 - 40, this.game.canvas.height / 2 + 75);
+      }
+    }
+
+    // Main game logic and state management
+    class Game {
+      constructor() {
+        // Initialize canvas and context
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.offsetX = 600;             // Grid offset X
+        this.offsetY = 0;               // Grid offset Y
+        this.ui = new UIManager(this);  // UI manager
+        // Initialize game state
+        this.resetGame('full');
+        // Setup event listeners
+        this.setupEvents();
+        // Start game loop
+        requestAnimationFrame(this.loop.bind(this));
+      }
+      // Reset game state based on mode: full, retry, or nextLevel
+      resetGame(mode) {
+        Object.assign(this, {
+          money: CONSTANTS.INITIAL_MONEY,
+          baseHealth: CONSTANTS.BASE_HEALTH,
+          waveInLevel: 0,
+          towers: [],
+          enemies: [],
+          spawnQueue: [],
+          waveActive: false,
+          lastWaveTime: this.gameTime || 0,
+          gameState: 'playing',
+          effects: new EffectManager(),
+          selectedTower: null,
+          cursorPos: null,
+          hoveredTower: null,
+          gameTime: 0,
+          previousTime: 0,
+          speedMultiplier: 1
+        });
+
+        // Mode-specific adjustments
+        if (mode === 'full') {
+          // Full reset: Start from level 1, reset towers
+          this.levelNumber = 1;
+          this.unlockedTowers = [0];
+        } else if (mode === 'retry') {
+          // Retry level: Keep level number and unlocked towers
+          // No changes needed, as newLevelNumber and newUnlockedTowers are already set
+        } else if (mode === 'nextLevel') {
+          // Next level: Increment level, keep unlocked『Towers
+          this.levelNumber++;
+        }
+
+        this.random = new SeededRandom(12345 + this.levelNumber);
+        this.unlockRandom = new SeededRandom(12345 + this.levelNumber);
+        this.grid = this.generateCity();
+
+        // Start initial wave
+        this.startWave();
+      }
+      // Create grid with streets, buildings, and base
+      generateCity() {
+        // Initialize grid with buildings
+        const grid = Array(CONSTANTS.GRID_SIZE).fill()
+          .map(() => Array(CONSTANTS.GRID_SIZE).fill(CONSTANTS.COLORS.BUILDING));
+        // Add streets
+        [0, 5, 10, 15, 19].forEach(i => {
+          for (let j = 0; j < CONSTANTS.GRID_SIZE; j++) {
+            grid[i][j] = grid[j][i] = CONSTANTS.COLORS.STREET;
+          }
+        });
+        // Set base position
+        grid[10][10] = CONSTANTS.COLORS.BASE;
+        // Add parking lots near streets
+        for (let i = 0; i < CONSTANTS.GRID_SIZE; i++) {
+          for (let j = 0; j < CONSTANTS.GRID_SIZE; j++) {
+            if (grid[i][j] === CONSTANTS.COLORS.BUILDING && this.random.next() < 0.3 && 
+                ([i-1, i+1].some(x => x >= 0 && x < CONSTANTS.GRID_SIZE && grid[x][j] === CONSTANTS.COLORS.STREET) ||
+                 [j-1, j+1].some(y => y >= 0 && y < CONSTANTS.GRID_SIZE && grid[i][y] === CONSTANTS.COLORS.STREET))) {
+              grid[i][j] = CONSTANTS.COLORS.PARKING_LOT;
+            }
+          }
+        }
+        return grid;
+      }
+      // Render a single grid tile
+      drawTile(i, j) {
+        const { x, y } = Utils.gridToScreen(i, j, this.offsetX, this.offsetY);
+        this.ctx.save();
+        // Draw tile shape
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, y - CONSTANTS.TILE.HEIGHT / 2);
+        this.ctx.lineTo(x + CONSTANTS.TILE.WIDTH / 2, y);
+        this.ctx.lineTo(x, y + CONSTANTS.TILE.HEIGHT / 2);
+        this.ctx.lineTo(x - CONSTANTS.TILE.WIDTH / 2, y);
+        this.ctx.closePath();
+        this.ctx.fillStyle = this.grid[i][j];
+        this.ctx.fill();
+        this.ctx.restore();
+      }
+      // Redraw entire game state
+      render() {
+        // Clear canvas
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        // Draw grid
+        for (let i = 0; i < CONSTANTS.GRID_SIZE; i++) {
+          for (let j = 0; j < CONSTANTS.GRID_SIZE; j++) {
+            this.drawTile(i, j);
+          }
+        }
+        // Draw towers, enemies, enemy paths, effects, and UI
+        this.enemies.forEach(e => e.drawPath(this.ctx));
+        this.enemies.forEach(e => e.draw(this.ctx));
+        if (this.gameState === 'playing') {
+          this.effects.draw(this.ctx);
+        }
+        this.towers.forEach(t => {
+          const showRange = this.hoveredTower && t.i === this.hoveredTower.i && t.j === this.hoveredTower.j;
+          t.draw(this.ctx, 1, showRange);
+        });
+        if (this.gameState === 'playing' || this.gameState === 'paused') {
+          this.ui.drawPreview(this.ctx);
+        }
+        this.ui.draw(this.ctx);
+        if (this.gameState === 'win') {
+          this.ui.drawWinScreen(this.ctx);
+        } else if (this.gameState === 'gameover') {
+          this.ui.drawGameOverScreen(this.ctx);
+        }
+      }
+      // Check if tower placement is valid
+      canPlaceTower(i, j) {
+        // Check tile type and existing towers
+        if (![CONSTANTS.COLORS.STREET, CONSTANTS.COLORS.PARKING_LOT].includes(this.grid[i][j]) || 
+            this.towers.some(t => t.i === i && t.j === j)) {
+          return false;
+        }
+        // Test pathfinding with temporary tower
+        const tempTowers = [...this.towers, { i, j }];
+        const borders = [];
+        for (let k = 0; k < CONSTANTS.GRID_SIZE; k++) {
+          if (this.grid[0][k] === CONSTANTS.COLORS.STREET) borders.push({ i: 0, j: k });
+          if (this.grid[CONSTANTS.GRID_SIZE - 1][k] === CONSTANTS.COLORS.STREET) borders.push({ i: CONSTANTS.GRID_SIZE - 1, j: k });
+          if (this.grid[k][0] === CONSTANTS.COLORS.STREET) borders.push({ i: k, j: 0 });
+          if (this.grid[k][CONSTANTS.GRID_SIZE - 1] === CONSTANTS.COLORS.STREET) borders.push({ i: k, j: CONSTANTS.GRID_SIZE - 1 });
+        }
+        // Ensure all border points can reach base
+        return borders.every(b => Pathfinding.aStar(b, { i: 10, j: 10 }, this.grid, tempTowers));
+      }
+      // Initiate a new enemy wave
+      startWave() {
+        this.waveInLevel++;
+        this.waveActive = true;
+        // Select spawn points
+        const borders = [];
+        for (let k = 0; k < CONSTANTS.GRID_SIZE; k++) {
+          if (this.grid[0][k] === CONSTANTS.COLORS.STREET) borders.push({ i: 0, j: k });
+          if (this.grid[CONSTANTS.GRID_SIZE - 1][k] === CONSTANTS.COLORS.STREET) borders.push({ i: CONSTANTS.GRID_SIZE - 1, j: k });
+          if (this.grid[k][0] === CONSTANTS.COLORS.STREET) borders.push({ i: k, j: 0 });
+          if (this.grid[k][CONSTANTS.GRID_SIZE - 1] === CONSTANTS.COLORS.STREET) borders.push({ i: k, j: CONSTANTS.GRID_SIZE - 1 });
+        }
+        const spawns = [];
+        for (let i = 0; i < Math.min(this.waveInLevel, 4); i++) {
+          const index = this.random.nextInt(0, borders.length);
+          spawns.push(borders.splice(index, 1)[0]);
+        }
+        // Calculate total spawns
+        const total = spawns.length * 3;
+        // Determine available enemy types
+        const maxType = Math.min(CONSTANTS.ENEMY_TYPES.length - 1, Math.floor((this.waveInLevel - 1) / 5));
+        // Calculate sum of spawn multipliers
+        const spawnMultiplierSum = CONSTANTS.ENEMY_TYPES.slice(0, maxType + 1)
+          .reduce((sum, type) => sum + type.spawnMultiplier, 0);
+        // Calculate spawn counts per type
+        let spawnsLeft = Math.floor(total * spawnMultiplierSum);
+        const spawnCounts = Array(maxType + 1).fill(0);
+        for (let type = maxType; type >= 0; type--) {
+          spawnCounts[type] = Math.min(
+            Math.max(1, Math.floor(this.random.next() * (CONSTANTS.ENEMY_TYPES[type].spawnMultiplier * total) + 1)),
+            spawnsLeft
+          );
+          spawnsLeft -= spawnCounts[type];
+        }
+        spawnCounts[0] = Math.max(1, spawnsLeft); // Assign remaining spawns to Basic
+        // Populate spawn queue
+        const interval = Math.max(500, 1000 - this.waveInLevel * 50);
+        let spawnIndex = 0;
+        for (let type = 0; type <= maxType; type++) {
+          for (let i = 0; i < spawnCounts[type]; i++) {
+            const spawnTime = this.gameTime + spawnIndex * interval;
+            const spawnPos = spawns[spawnIndex % spawns.length];
+            this.spawnQueue.push({ time: spawnTime, pos: spawnPos, type });
+            spawnIndex++;
+          }
+        }
+      }
+      // Update game state
+      update(gameTime, gameDeltaTime) {
+        if (this.gameState !== 'playing') return;
+        // Spawn enemies from queue
+        while (this.spawnQueue.length && gameTime >= this.spawnQueue[0].time) {
+          const spawn = this.spawnQueue.shift();
+          this.enemies.push(new Enemy(spawn.pos, this, spawn.type));
+        }
+        // Start new wave
+        if (!this.waveActive && !this.enemies.length && gameTime - this.lastWaveTime > 5000) {
+          this.startWave();
+        }
+        // Update towers and enemies
+        this.towers.forEach(t => t.update(gameTime));
+        this.enemies.forEach(e => e.update(gameTime, gameDeltaTime));
+        // Remove dead enemies or those that reached base
+        this.enemies = this.enemies.filter(e => {
+          if (e.reachedBase) {
+            this.baseHealth -= e.damage;
+            return false;
+          }
+          if (e.health <= 0) {
+            this.money += e.reward;
+            return false;
+          }
+          return true;
+        });
+        // End wave
+        if (this.waveActive && !this.enemies.length && this.spawnQueue.length === 0) {
+          this.waveActive = false;
+          this.lastWaveTime = gameTime;
+          this.money += 50;
+          // Check for level completion
+          if (this.waveInLevel === 25) {
+            this.gameState = 'win';
+          }
+        }
+        this.effects.update(performance.now());
+      }
+      // Handle mouse interactions
+      setupEvents() {
+        this.canvas.addEventListener('mousedown', e => {
+          // Get mouse position
+          const x = e.clientX - this.canvas.getBoundingClientRect().left;
+          const y = e.clientY - this.canvas.getBoundingClientRect().top;
+          
+          if (e.button === 0) { // Left click
+            if (this.gameState === 'win') {
+              // Proceed to next level
+              this.resetGame('nextLevel');
+            } else if (this.gameState === 'gameover') {
+              // Check for retry button click
+              if (x >= this.canvas.width / 2 - 80 && x <= this.canvas.width / 2 + 80 &&
+                  y >= this.canvas.height / 2 + 50 && y <= this.canvas.height / 2 + 90) {
+                this.resetGame('retry');
+              } else {
+                // Restart game
+                this.resetGame('full');
+              }
+            } else {
+              // Handle UI clicks
+              if (y > 630 && y < 680) {
+                const towerIndex = Math.floor((x - 400) / 60);
+                // Select tower
+                if (towerIndex >= 0 && towerIndex < CONSTANTS.TOWER_TYPES.length && 
+                    this.unlockedTowers.includes(towerIndex)) {
+                  this.selectedTower = towerIndex;
+                }
+                // Research new tower
+                else if (x >= 700 && x < 850 && this.money >= 100 && 
+                         this.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length) {
+                  this.unlockTower();
+                  this.money -= 100;
+                }
+                // Toggle pause
+                else if (x >= 860 && x < 1010) {
+                  this.gameState = this.gameState === 'paused' ? 'playing' : 'paused';
+                }
+                // Toggle speedup
+                else if (x >= 1020 && x < 1170) {
+                  this.toggleSpeedup();
+                }
+                return;
+              }
+              // Place tower
+              const pos = Utils.screenToGrid(x, y, this.offsetX, this.offsetY);
+              if (pos && this.selectedTower !== null && 
+                  this.money >= CONSTANTS.TOWER_TYPES[this.selectedTower].cost && 
+                  this.canPlaceTower(pos.i, pos.j)) {
+                const newTower = new Tower(pos.i, pos.j, this.selectedTower, this);
+                // Insert tower in sorted order based on i + j to ensure correct rendering depth
+                const insertIndex = this.towers.findIndex(t => (t.i + t.j) > (pos.i + pos.j));
+                if (insertIndex === -1) {
+                  this.towers.push(newTower);
+                } else {
+                  this.towers.splice(insertIndex, 0, newTower);
+                }
+                this.money -= CONSTANTS.TOWER_TYPES[this.selectedTower].cost;
+                this.enemies.forEach(e => e.updatePath());
+              }
+            }
+          } else if (e.button === 2) { // Right click
+            // Remove tower
+            const pos = Utils.screenToGrid(x, y, this.offsetX, this.offsetY);
+            if (pos) {
+              const idx = this.towers.findIndex(t => t.i === pos.i && t.j === pos.j);
+              if (idx !== -1) {
+                this.money += Math.floor(CONSTANTS.TOWER_TYPES[this.towers[idx].type].cost / 2);
+                this.towers.splice(idx, 1);
+                this.enemies.forEach(e => e.updatePath());
+              }
+            }
+          }
+        });
+        // Update cursor position and hovered tower
+        this.canvas.addEventListener('mousemove', e => {
+          const x = e.clientX - this.canvas.getBoundingClientRect().left;
+          const y = e.clientY - this.canvas.getBoundingClientRect().top;
+          this.cursorPos = Utils.screenToGrid(x, y, this.offsetX, this.offsetY);
+          // Update hovered tower
+          this.hoveredTower = null;
+          if (this.cursorPos && y < CONSTANTS.UI.Y) {
+            this.hoveredTower = this.towers.find(t => t.i === this.cursorPos.i && t.j === this.cursorPos.j) || null;
+          }
+          // Change cursor style for clickable areas
+          this.canvas.style.cursor = ( y > 630 && y < 680 && 
+            ((x >= 400 && x < 400 + CONSTANTS.TOWER_TYPES.length * 60 && 
+              this.unlockedTowers.includes(Math.floor((x - 400) / 60))) || 
+             (x >= 700 && x < 850 && this.money >= 100 && 
+              this.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length) || 
+             (x >= 860 && x < 1170)) && (this.gameState === 'playing' || this.gameState === 'paused') ) 
+             || (this.gameState === 'gameover' && 
+                 x >= this.canvas.width / 2 - 80 && x <= this.canvas.width / 2 + 80 &&
+                 y >= this.canvas.height / 2 + 50 && y <= this.canvas.height / 2 + 90)
+             ? 'pointer' : 'default';
+        });
+        // Prevent context menu
+        this.canvas.addEventListener('contextmenu', e => e.preventDefault());
+      }
+      // Unlock a random locked tower type
+      unlockTower() {
+        const locked = CONSTANTS.TOWER_TYPES.map((_, i) => i)
+          .filter(i => !this.unlockedTowers.includes(i));
+        if (locked.length) {
+          const index = this.unlockRandom.nextInt(0, locked.length);
+          this.unlockedTowers.push(locked[index]);
+        }
+      }
+      // Toggle game speed between normal and 5x
+      toggleSpeedup() {
+        this.speedMultiplier = this.speedMultiplier > 2 ? 1.5 : 15;
+      }
+      // Main game loop
+      loop(time) {
+        // Check for game over
+        if (this.baseHealth <= 0 && this.gameState === 'playing') {
+          this.gameState = 'gameover';
+        }
+        // Initialize previousTime on first frame
+        if (this.previousTime === 0) this.previousTime = time;
+        // Calculate real delta and game delta
+        const deltaTime = time - this.previousTime;
+        this.previousTime = time;
+        const gameDeltaTime = deltaTime * this.speedMultiplier;
+        this.gameTime += gameDeltaTime;
+        // Update and render
+        this.update(this.gameTime, gameDeltaTime);
+        this.render();
+        requestAnimationFrame(this.loop.bind(this));
+      }
+    }
+
+    // Initialize and start the game
+    new Game();
+  </script>
+</body>
+</html>
