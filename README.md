@@ -16,6 +16,10 @@ A browser-based tower defense game with an isometric city grid, featuring multip
   - Win: Complete 25 waves in a level.
   - Lose: Base health reaches zero.
 
+## Screenshot
+
+![Tiny Tower Defense Screenshot](screenshot.png)
+
 ## How to Play
 1. Open `index.html` in a modern web browser (e.g., Chrome, Firefox, Edge).
 2. **Controls**:
