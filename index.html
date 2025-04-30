@@ -892,7 +892,13 @@
         this.ctx.lineTo(x, y + CONSTANTS.TILE.HEIGHT / 2);
         this.ctx.lineTo(x - CONSTANTS.TILE.WIDTH / 2, y);
         this.ctx.closePath();
-        this.ctx.fillStyle = this.grid[i][j];
+        // Set tile color
+        let fillColor = this.grid[i][j];
+        if (fillColor === CONSTANTS.COLORS.BUILDING) {
+          const hue = 120 + ((this.levelNumber * 133) % 103) - 50;
+          fillColor = `hsl(${hue}, 50%, 33%)`;
+        }
+        this.ctx.fillStyle = fillColor;
         this.ctx.fill();
         this.ctx.restore();
       }
