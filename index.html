@@ -798,8 +798,8 @@
         }
       }
 
-      // Reset game state based on mode: full, retry, or nextLevel
-      resetGame(mode) {
+      // Reset game state based on mode: full, retry, nextLevel, or setLevel
+      resetGame(mode, levelNumber = null) {
         if (this.backgroundAudio && !this.backgroundAudio.paused) {
           this.backgroundAudio.pause();
         }
@@ -829,10 +829,13 @@
           this.unlockedTowers = [0];
         } else if (mode === 'retry') {
           // Retry level: Keep level number and unlocked towers
-          // No changes needed, as newLevelNumber and newUnlockedTowers are already set
+          // No changes needed, as levelNumber and unlockedTowers are preserved
         } else if (mode === 'nextLevel') {
           // Next level: Increment level, keep unlocked towers
           this.levelNumber++;
+        } else if (mode === 'setLevel' && levelNumber !== null) {
+          // Set specific level: Use provided level number, reset towers
+          this.levelNumber = levelNumber;
         }
 
         this.random = new SeededRandom(12345 + this.levelNumber);
@@ -1099,6 +1102,31 @@
 
         // Prevent context menu on right-click
         this.canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        // Add keypress event listener for cheat code
+        document.addEventListener('keypress', e => {
+          this.cheatBuffer += e.key.toLowerCase();
+          // Keep only the last 5 characters to match "level" and "tower"
+          if (this.cheatBuffer.length > 5) {
+            this.cheatBuffer = this.cheatBuffer.slice(-5);
+          }
+          if (this.cheatBuffer === 'level') {
+            const input = prompt('Enter level number (1 or higher):', this.levelNumber);
+            if (input !== null) {
+              const newLevel = parseInt(input, 10);
+              if (!isNaN(newLevel) && newLevel >= 1) {
+                this.resetGame('setLevel', newLevel);
+              } else {
+                alert('Please enter a valid level number (1 or higher).');
+              }
+            }
+            this.cheatBuffer = '';
+          } else if  (this.cheatBuffer === 'tower') {
+            // Unlock all towers
+            this.unlockedTowers = CONSTANTS.TOWER_TYPES.map((_, i) => i);
+            this.cheatBuffer = '';
+          }
+        });
       }
 
       // Unlock a random tower
