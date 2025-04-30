@@ -98,14 +98,17 @@
       constructor() {
         this.effects = []; // Array to store active effects
       }
+
       // Add new effect with type, properties, and duration
       add(type, props, duration) {
         this.effects.push({ type, ...props, startTime: performance.now(), duration });
       }
+
       // Remove expired effects
       update(time) {
         this.effects = this.effects.filter(e => time < e.startTime + e.duration);
       }
+
       // Render all active effects
       draw(ctx) {
         this.effects.forEach(e => {
@@ -148,6 +151,7 @@
       static heuristic(a, b) {
         return Math.abs(a.i - b.i) + Math.abs(a.j - b.j);
       }
+
       // Get valid adjacent cells
       static getNeighbors(node, grid, towers) {
         return [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([di, dj]) => ({ i: node.i + di, j: node.j + dj }))
@@ -158,6 +162,7 @@
             !towers.some(t => t.i === n.i && t.j === n.j)
           );
       }
+
       // Find shortest path using A* algorithm
       static aStar(start, goal, grid, towers) {
         const open = [start];
@@ -209,6 +214,7 @@
         this.spec = CONSTANTS.TOWER_TYPES[type]; // Tower specifications
         this.lastShot = 0;            // Last shot timestamp
       }
+
       // Render tower with range circle
       draw(ctx, alpha = 1, showRange = false) {
         const { x, y } = Utils.gridToScreen(this.i, this.j, this.game.offsetX, this.game.offsetY);
@@ -245,6 +251,7 @@
         }
         ctx.restore();
       }
+
       // Apply tower effects to enemies in range
       update(gameTime) {
         // Check cooldown
@@ -323,6 +330,7 @@
         this.slowEnd = 0;             // Slow effect end time
         this.dot = null;              // Damage-over-time effect
       }
+
       // Draw enemy with health bar and status effects
       draw(ctx) {
         ctx.save();
@@ -380,6 +388,7 @@
           this.game.effects.add('dotIndicator', { x: this.position.x, y: this.position.y }, 200);
         }
       }
+
       // Draw enemy's path to base
       drawPath(ctx) {
         if (this.path.length < 2) return;
@@ -403,6 +412,7 @@
         ctx.setLineDash([]);
         ctx.restore();
       }
+
       // Update path to base
       updatePath() {
         // Get current grid position
@@ -427,6 +437,7 @@
           ? Utils.gridToScreen(this.path[1].i, this.path[1].j, this.game.offsetX, this.game.offsetY)
           : this.position;
       }
+
       // Update enemy position and status
       update(gameTime, gameDeltaTime) {
         if (this.game.gameState === 'paused' || this.reachedBase) return;
@@ -898,7 +909,7 @@
           const showRange = this.hoveredTower && t.i === this.hoveredTower.i && t.j === this.hoveredTower.j;
           t.draw(this.ctx, 1, showRange);
         });
-        if (this.gameState === 'playing' || this.gameState === 'paused') {
+        if (['playing', 'paused'].includes(this.gameState)) {
           this.ui.drawPreview(this.ctx);
         }
         this.ui.draw(this.ctx);
