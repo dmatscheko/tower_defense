@@ -20,12 +20,20 @@ A browser-based tower defense game with an isometric city grid, featuring multip
 
 ![Tiny Tower Defense Screenshot](screenshot.png)
 
-## How to Play
-1. Open `index.html` in a modern web browser (e.g., Chrome, Firefox, Edge). To enable the browser to load sound effects, serve the repository with a web server. For example, run `python3 -m http.server 8000` in the directory containing `index.html`, then open `http://[::]:8000/` in a browser.
-2. **Controls**:
-   - **Left-click**: Select towers from the UI, place towers on valid tiles (streets/parking lots), or interact with buttons (Research, Pause, Speed).
-   - **Right-click**: Remove a placed tower (refunds half the cost).
-   - **Mouse hover**: View tower range or highlight clickable areas.
-3. **Objective**: Prevent enemies from reaching the base by placing towers strategically. Manage resources to survive all waves.
+## Setup and Play
+
+### Run Locally
+1. Clone or download the repository: `git clone https://github.com/dmatscheko/tower_defense.git`.
+2. To enable sound effects, serve the files with a web server (e.g., `python3 -m http.server 8000` in the directory containing `index.html`).
+3. Open `http://localhost:8000/` in a modern browser (Chrome, Firefox, Edge).
+4. Alternatively, open `index.html` directly, but sound effects may not load due to browser security restrictions.
+
+### Controls
+- **Left-click**: Select towers from the UI, place towers on valid tiles (streets/parking lots), or interact with buttons (Research, Pause, Speed).
+- **Right-click**: Remove a placed tower (refunds half the cost).
+- **Mouse hover**: Display tower range.
+
+### Objective
+Prevent enemies from reaching the base by placing towers strategically. Manage resources to survive all waves.
 
 Enjoy defending the city!
