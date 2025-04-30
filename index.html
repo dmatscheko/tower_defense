@@ -1118,6 +1118,13 @@
         document.addEventListener('keypress', e => {
           // Space bar toggles pause
           if (e.key === ' ') this.togglePause();
+          // Tower selection with keys 1, 2, 3, 4
+          if (['1', '2', '3', '4'].includes(e.key)) {
+            const towerIndex = parseInt(e.key) - 1;
+            if (this.unlockedTowers.includes(towerIndex)) {
+              this.selectedTower = towerIndex;
+            }
+          }
           // Cheat code handling
           this.cheatBuffer += e.key.toLowerCase();
           // Keep only the last 5 characters to match "level", "tower", and "money"
@@ -1135,11 +1142,11 @@
               }
             }
             this.cheatBuffer = '';
-          } else if  (this.cheatBuffer === 'tower') {
+          } else if (this.cheatBuffer === 'tower') {
             // Unlock all towers
             this.unlockedTowers = CONSTANTS.TOWER_TYPES.map((_, i) => i);
             this.cheatBuffer = '';
-          } else if  (this.cheatBuffer === 'money') {
+          } else if (this.cheatBuffer === 'money') {
             // Unlock all towers
             this.money += 1000;
             this.cheatBuffer = '';
