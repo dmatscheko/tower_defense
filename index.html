@@ -738,7 +738,6 @@
         try {
           this.backgroundSource = this.audioContext.createMediaElementSource(this.backgroundAudio);
           this.backgroundSource.connect(this.backgroundGain);
-          this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
         } catch (e) {
           console.error('Error setting up background audio:', e);
         }
@@ -777,21 +776,20 @@
         }
       }
 
-      // Resume audio context on user interaction
+      // Resume audio context and start background audio on user interaction
       resumeAudioContext() {
+        const playAudio = () => this.gameState === 'playing' && this.backgroundAudio.play()
+          .catch(e => console.error('Background audio play failed:', e));
         if (this.audioContext.state === 'suspended') {
-          this.audioContext.resume().then(() => {
-            console.log('AudioContext resumed');
-            if (this.backgroundAudio.paused) {
-              this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
-            }
-          });
+          this.audioContext.resume().then(playAudio).catch(e => console.error('AudioContext resume failed:', e));
+        } else {
+          playAudio();
         }
       }
 
       // Reset game state based on mode: full, retry, or nextLevel
       resetGame(mode) {
-        if (this.backgroundAudio) {
+        if (this.backgroundAudio && !this.backgroundAudio.paused) {
           this.backgroundAudio.pause();
         }
         Object.assign(this, {
@@ -833,7 +831,7 @@
         // Start initial wave
         this.startWave();
         // Resume background audio after reset
-        if (this.audioContext.state === 'running') {
+        if (this.audioContext.state === 'running' && this.gameState === 'playing') {
           this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
         }
       }
@@ -1104,13 +1102,12 @@
 
       // Main game loop
       loop(time) {
-        // Check for game over and pause background audio
+        // Check for game over
         if (this.baseHealth <= 0 && this.gameState === 'playing') {
           this.gameState = 'gameover';
-          this.backgroundAudio.pause();
         }
-        // Pause background audio on win
-        if (this.gameState === 'win' && !this.backgroundAudio.paused) {
+        // Pause background audio on win or game over
+        if (['win', 'gameover'].includes(this.gameState) && !this.backgroundAudio.paused) {
           this.backgroundAudio.pause();
         }
         // Initialize previousTime on first frame
