@@ -491,7 +491,7 @@
 
         if (isTower) {
           // Render tower button
-          ctx.fillStyle = '#eee';
+          ctx.fillStyle = enabled ? '#eee' : '#ccc';
           ctx.fillRect(this.x, this.y, this.width, this.height);
 
           // Draw tower preview
@@ -502,14 +502,14 @@
           ctx.restore();
 
           // Border style based on tower status
-          ctx.strokeStyle = this.game.unlockedTowers.includes(towerIndex)
+          ctx.strokeStyle = enabled
             ? (this.game.selectedTower === towerIndex ? 'yellow' : 'black')
             : 'gray';
           ctx.lineWidth = 2;
           ctx.strokeRect(this.x, this.y, this.width, this.height);
 
           // Tower button text
-          ctx.fillStyle = this.game.unlockedTowers.includes(towerIndex) ? 'black' : 'gray';
+          ctx.fillStyle = enabled ? 'black' : 'gray';
           ctx.font = '12px Arial';
           ctx.fillText(text, this.x, this.y + 61);
         } else {
