@@ -1037,7 +1037,7 @@
           this.lastWaveTime = gameTime;
           this.money += 50;
           // Check for level completion
-          if (this.waveInLevel === 25) {
+          if (this.waveInLevel >= 25) {
             this.gameState = 'win';
           }
         }
