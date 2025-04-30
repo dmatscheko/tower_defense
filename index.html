@@ -520,8 +520,7 @@
           // Action button text
           ctx.fillStyle = 'black';
           ctx.font = '16px Arial';
-          const textY = this.type === 'retry' ? 25 : 30;
-          ctx.fillText(text, this.x + 10, this.y + textY);
+          ctx.fillText(text, this.x + 10, this.y + 30);
         }
 
         ctx.restore();
@@ -605,7 +604,7 @@
             x: 520,
             y: 390,
             width: 160,
-            height: 40,
+            height: 50,
             text: 'Retry Level',
             type: 'retry',
             isEnabled: () => true,
