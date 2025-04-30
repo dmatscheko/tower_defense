@@ -1106,7 +1106,7 @@
         // Add keypress event listener for cheat code
         document.addEventListener('keypress', e => {
           this.cheatBuffer += e.key.toLowerCase();
-          // Keep only the last 5 characters to match "level" and "tower"
+          // Keep only the last 5 characters to match "level", "tower", and "money"
           if (this.cheatBuffer.length > 5) {
             this.cheatBuffer = this.cheatBuffer.slice(-5);
           }
@@ -1124,6 +1124,10 @@
           } else if  (this.cheatBuffer === 'tower') {
             // Unlock all towers
             this.unlockedTowers = CONSTANTS.TOWER_TYPES.map((_, i) => i);
+            this.cheatBuffer = '';
+          } else if  (this.cheatBuffer === 'money') {
+            // Unlock all towers
+            this.money += 1000;
             this.cheatBuffer = '';
           }
         });
