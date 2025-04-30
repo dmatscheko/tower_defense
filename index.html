@@ -463,8 +463,8 @@
       constructor(config, game) {
         this.x = config.x;              // Button x position
         this.y = config.y || 630;       // Button y position (default for UI)
-        this.width = config.width;      // Button width
-        this.height = config.height;    // Button height
+        this.width = config.width || 150;      // Button width
+        this.height = config.height || 50;    // Button height
         this.text = config.text;        // Button text (function or string)
         this.type = config.type;        // Button type (tower, research, pause, speed, retry)
         this.towerIndex = config.towerIndex; // Tower index for tower buttons
@@ -546,7 +546,6 @@
         this.TOWER_BUTTONS = CONSTANTS.TOWER_TYPES.map((tower, index) => ({
           x: 400 + index * 60,
           width: 50,
-          height: 50,
           text: `${tower.name} (${tower.cost})`,
           type: 'tower',
           towerIndex: index,
@@ -560,8 +559,6 @@
         this.ACTION_BUTTONS = [
           {
             x: 700,
-            width: 150,
-            height: 50,
             text: 'Research (100)',
             type: 'research',
             isEnabled: game => game.money >= 100 && game.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length,
@@ -573,8 +570,6 @@
           },
           {
             x: 860,
-            width: 150,
-            height: 50,
             text: game => game.gameState === 'paused' ? 'Resume' : 'Pause',
             type: 'pause',
             isEnabled: () => true,
@@ -590,21 +585,17 @@
           },
           {
             x: 1020,
-            width: 150,
-            height: 50,
             text: game => game.speedMultiplier > 2 ? 'Speed x10  >>' : 'Speed x10',
             type: 'speed',
             isEnabled: () => true,
             onClick: game => {
-              game.toggleSpeedup();
+              game.speedMultiplier = game.speedMultiplier > 2 ? 1.5 : 15;
               return true;
             }
           },
           {
-            x: 520,
+            x: 525,
             y: 390,
-            width: 160,
-            height: 50,
             text: 'Retry Level',
             type: 'retry',
             isEnabled: () => true,
@@ -1115,11 +1106,6 @@
           const index = this.unlockRandom.nextInt(0, locked.length);
           this.unlockedTowers.push(locked[index]);
         }
-      }
-
-      // Toggle game speed
-      toggleSpeedup() {
-        this.speedMultiplier = this.speedMultiplier > 2 ? 1.5 : 15;
       }
 
       // Main game loop
