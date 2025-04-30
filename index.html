@@ -458,12 +458,197 @@
       }
     }
 
+    // Represents a single UI button (tower or action)
+    class Button {
+      constructor(config, game) {
+        this.x = config.x;              // Button x position
+        this.y = config.y || 630;       // Button y position (default for UI)
+        this.width = config.width;      // Button width
+        this.height = config.height;    // Button height
+        this.text = config.text;        // Button text (function or string)
+        this.type = config.type;        // Button type (tower, research, pause, speed, retry)
+        this.towerIndex = config.towerIndex; // Tower index for tower buttons
+        this.isEnabled = config.isEnabled || (() => true); // Enabled condition
+        this.isVisible = config.isVisible || (() => true); // Visibility condition
+        this.onClick = config.onClick;   // Click handler function
+        this.game = game;               // Game instance
+      }
+
+      // Check if point (x, y) is within button bounds
+      isPointInside(x, y) {
+        return x >= this.x && x < this.x + this.width &&
+               y >= this.y && y < this.y + this.height;
+      }
+
+      // Render the button (called by ButtonManager)
+      draw(ctx, isTower = false, towerIndex = null) {
+        if (!this.isVisible(this.game)) return;
+        const enabled = this.isEnabled(this.game);
+        if (isTower) {
+          // Draw tower button
+          ctx.fillStyle = '#eee';
+          ctx.fillRect(this.x, this.y, this.width, this.height);
+          ctx.save();
+          ctx.translate(this.x + 25, this.y + 36);
+          const tempTower = new Tower(0, 0, towerIndex, {
+            ...this.game, offsetX: 0, offsetY: 0
+          });
+          tempTower.draw(ctx, 1, false);
+          ctx.restore();
+          ctx.strokeStyle = this.game.unlockedTowers.includes(towerIndex)
+            ? (this.game.selectedTower === towerIndex ? 'yellow' : 'black')
+            : 'gray';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(this.x, this.y, this.width, this.height);
+          ctx.fillStyle = this.game.unlockedTowers.includes(towerIndex) ? 'black' : 'gray';
+          ctx.font = '12px Arial';
+          ctx.fillText(typeof this.text === 'function' ? this.text(this.game) : this.text, this.x, this.y + 61);
+        } else {
+          // Draw action button
+          ctx.fillStyle = enabled ? '#eee' : 'gray';
+          ctx.fillRect(this.x, this.y, this.width, this.height);
+          ctx.fillStyle = 'black';
+          ctx.font = this.type === 'retry' ? '16px Arial' : '16px Arial';
+          ctx.fillText(
+            typeof this.text === 'function' ? this.text(this.game) : this.text,
+            this.x + 10,
+            this.y + (this.type === 'retry' ? 25 : 30)
+          );
+        }
+      }
+
+      // Handle button click
+      handleClick() {
+        if (!this.isVisible(this.game) || !this.isEnabled(this.game)) return false;
+        return this.onClick(this.game);
+      }
+
+      // Check if button is clickable for cursor style
+      isClickable() {
+        return this.isVisible(this.game) && this.isEnabled(this.game);
+      }
+    }
+
+    // Manages all UI buttons
+    class ButtonManager {
+      constructor(game) {
+        this.game = game;
+        // Define tower button configurations
+        this.TOWER_BUTTONS = CONSTANTS.TOWER_TYPES.map((tower, index) => ({
+          x: 400 + index * 60,
+          width: 50,
+          height: 50,
+          text: `${tower.name} (${tower.cost})`,
+          type: 'tower',
+          towerIndex: index,
+          isEnabled: game => game.unlockedTowers.includes(index),
+          onClick: game => {
+            game.selectedTower = index;
+            return true;
+          }
+        }));
+        // Define action button configurations
+        this.ACTION_BUTTONS = [
+          {
+            x: 700,
+            width: 150,
+            height: 50,
+            text: 'Research (100)',
+            type: 'research',
+            isEnabled: game => game.money >= 100 && game.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length,
+            onClick: game => {
+              game.unlockTower();
+              game.money -= 100;
+              return true;
+            }
+          },
+          {
+            x: 860,
+            width: 150,
+            height: 50,
+            text: game => game.gameState === 'paused' ? 'Resume' : 'Pause',
+            type: 'pause',
+            isEnabled: () => true,
+            onClick: game => {
+              game.gameState = game.gameState === 'paused' ? 'playing' : 'paused';
+              if (game.gameState === 'paused') {
+                game.backgroundAudio.pause();
+              } else {
+                game.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
+              }
+              return true;
+            }
+          },
+          {
+            x: 1020,
+            width: 150,
+            height: 50,
+            text: game => game.speedMultiplier > 2 ? 'Speed x10  >>' : 'Speed x10',
+            type: 'speed',
+            isEnabled: () => true,
+            onClick: game => {
+              game.toggleSpeedup();
+              return true;
+            }
+          },
+          {
+            x: 520,
+            y: 390,
+            width: 160,
+            height: 40,
+            text: 'Retry Level',
+            type: 'retry',
+            isEnabled: () => true,
+            isVisible: game => game.gameState === 'gameover',
+            onClick: game => {
+              game.resetGame('retry');
+              return true;
+            }
+          }
+        ];
+        // Initialize buttons
+        this.buttons = [
+          ...this.TOWER_BUTTONS.map(config => new Button(config, game)),
+          ...this.ACTION_BUTTONS.map(config => new Button(config, game))
+        ];
+      }
+
+      // Handle button clicks
+      handleButtonClick(x, y) {
+        for (const button of this.buttons) {
+          if (button.isPointInside(x, y) && button.handleClick()) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // Check if cursor should be pointer
+      isCursorPointer(x, y) {
+        return this.buttons.some(button => button.isPointInside(x, y) && button.isClickable());
+      }
+
+      // Draw all buttons
+      draw(ctx, buttonType = null) {
+        this.buttons.forEach((button, index) => {
+          if (buttonType !== null && buttonType !== button.type) return;
+          if (button.type === 'tower') {
+            button.draw(ctx, true, button.towerIndex);
+          } else {
+            button.draw(ctx, false);
+          }
+        });
+      }
+    }
+
     // Manages user interface elements
     class UIManager {
       constructor(game) {
-        this.game = game; // Game instance
+        this.game = game;
+        this.buttonManager = new ButtonManager(game);
       }
-      // Render UI: stats, tower selection, buttons
+
+      // Render UI: stats and buttons
       draw(ctx) {
         // Draw UI background
         ctx.fillStyle = '#ccc';
@@ -475,48 +660,10 @@
         ctx.fillText(`Base Health: ${this.game.baseHealth}`, 10, 670);
         ctx.fillText(`Level: ${this.game.levelNumber} Wave: ${(this.game.waveInLevel > 0) ? this.game.waveInLevel : '1'}`, 200, 640);
         ctx.fillText(`Enemies Left: ${this.game.enemies.length + this.game.spawnQueue.length}`, 200, 670);
-        // Draw tower selection
-        CONSTANTS.TOWER_TYPES.forEach((t, i) => {
-          const x = 400 + i * 60;
-          const iconX = x + 25; // Center of 50x50 icon
-          const iconY = 655;    // Center of 50x50 icon (630 + 50/2)
-          // Draw square background
-          ctx.fillStyle = '#eee';
-          ctx.fillRect(x, 630, 50, 50);
-          // Draw tower shape
-          ctx.save();
-          ctx.translate(iconX, iconY+11);
-          // Create temporary tower with adjusted offset
-          const tempTower = new Tower(0, 0, i, {
-            ...this.game, offsetX: 0, offsetY: 0
-          });
-          tempTower.draw(ctx, 1, false);
-          ctx.restore();
-          // Highlight selected/unlocked towers
-          ctx.strokeStyle = this.game.unlockedTowers.includes(i) 
-            ? (this.game.selectedTower === i ? 'yellow' : 'black') 
-            : 'gray';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(x, 630, 50, 50);
-          // Draw tower info
-          ctx.fillStyle = this.game.unlockedTowers.includes(i) ? 'black' : 'gray';
-          ctx.font = '12px Arial';
-          ctx.fillText(`${t.name} (${t.cost})`, x, 691);
-        });
-        // Draw buttons
-        this.drawButton(ctx, 700, 'Research (100)', this.game.money >= 100 && 
-          this.game.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length);
-        this.drawButton(ctx, 860, this.game.gameState === 'paused' ? 'Resume' : 'Pause', true);
-        this.drawButton(ctx, 1020, this.game.speedMultiplier > 2 ? 'Speed x10  >>' : 'Speed x10', true);
+         // Draw buttons
+        this.buttonManager.draw(ctx);
       }
-      // Render a clickable button
-      drawButton(ctx, x, text, enabled) {
-        ctx.fillStyle = enabled ? '#eee' : 'gray';
-        ctx.fillRect(x, 630, 150, 50);
-        ctx.fillStyle = 'black';
-        ctx.font = '16px Arial';
-        ctx.fillText(text, x + 10, 660);
-      }
+
       // Show tower placement preview
       drawPreview(ctx) {
         if (this.game.selectedTower === null || !this.game.cursorPos) return;
@@ -526,31 +673,34 @@
           new Tower(i, j, this.game.selectedTower, this.game).draw(ctx, 0.7, true);
         }
       }
+
       // Render win screen
       drawWinScreen(ctx) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.save();
+        ctx.fillStyle = '#0008';
         ctx.fillRect(0, 0, this.game.canvas.width, this.game.canvas.height);
-        ctx.fillStyle = 'white';
-        ctx.font = '40px Arial';
-        ctx.fillText('You Win!', this.game.canvas.width / 2 - 100, this.game.canvas.height / 2 - 20);
+        ctx.fillStyle = '#fffe';
+        ctx.textAlign = 'center';
+        ctx.font = '60px Arial';
+        ctx.fillText('You Win!', this.game.canvas.width / 2, this.game.canvas.height / 2 - 30);
         ctx.font = '20px Arial';
-        ctx.fillText('Click to proceed to next level', this.game.canvas.width / 2 - 150, this.game.canvas.height / 2 + 20);
+        ctx.fillText('Click to proceed to next level', this.game.canvas.width / 2, this.game.canvas.height / 2 + 20);
+        ctx.restore();
       }
+
       // Render game over screen
       drawGameOverScreen(ctx) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.save();
+        ctx.fillStyle = '#0008';
         ctx.fillRect(0, 0, this.game.canvas.width, this.game.canvas.height);
-        ctx.fillStyle = 'white';
-        ctx.font = '40px Arial';
-        ctx.fillText('Game Over', this.game.canvas.width / 2 - 120, this.game.canvas.height / 2 - 20);
+        ctx.fillStyle = '#fffe';
+        ctx.textAlign = 'center';
+        ctx.font = '60px Arial';
+        ctx.fillText('Game Over', this.game.canvas.width / 2, this.game.canvas.height / 2 - 30);
         ctx.font = '20px Arial';
-        ctx.fillText('Click to restart', this.game.canvas.width / 2 - 80, this.game.canvas.height / 2 + 20);
-        // Draw retry button
-        ctx.fillStyle = '#eee';
-        ctx.fillRect(this.game.canvas.width / 2 - 80, this.game.canvas.height / 2 + 50, 160, 40);
-        ctx.fillStyle = 'black';
-        ctx.font = '16px Arial';
-        ctx.fillText('Retry Level', this.game.canvas.width / 2 - 40, this.game.canvas.height / 2 + 75);
+        ctx.fillText('Click anywhere to restart', this.game.canvas.width / 2, this.game.canvas.height / 2 + 20);
+        ctx.restore();
+        this.buttonManager.draw(ctx, 'retry'); // Draw retry button
       }
     }
 
@@ -564,9 +714,9 @@
         this.offsetY = 0;   // Grid offset Y
         this.ui = new UIManager(this); // UI manager
 
-        // Initialize Web Audio API for sound effects and background audio
+        // Initialize Web Audio API
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        // Gain node for background audio (low volume static + rumbling)
+        // Gain node for background "music"
         this.backgroundGain = this.audioContext.createGain();
         this.backgroundGain.gain.setValueAtTime(0.1, this.audioContext.currentTime); // 10% volume
         this.backgroundGain.connect(this.audioContext.destination);
@@ -587,7 +737,7 @@
           tower_place: null
         };
 
-        // Load audio files asynchronously
+        // Load audio files
         this.loadAudioFiles();
 
         // Initialize game state
@@ -634,7 +784,7 @@
         }
       }
 
-      // Play a sound effect using Web Audio API
+      // Play a sound effect
       playSound(key) {
         const buffer = this.soundEffects[key];
         if (buffer && this.audioContext.state === 'running') {
@@ -645,7 +795,7 @@
         }
       }
 
-      // Resume audio context on user interaction (required by some browsers)
+      // Resume audio context on user interaction
       resumeAudioContext() {
         if (this.audioContext.state === 'suspended') {
           this.audioContext.resume().then(() => {
@@ -659,7 +809,6 @@
 
       // Reset game state based on mode: full, retry, or nextLevel
       resetGame(mode) {
-        // Pause background audio during reset
         if (this.backgroundAudio) {
           this.backgroundAudio.pause();
         }
@@ -707,7 +856,7 @@
         }
       }
 
-      // Create grid with streets, buildings, and base
+      // Create city grid with streets, buildings, and base
       generateCity() {
         // Initialize grid with buildings
         const grid = Array(CONSTANTS.GRID_SIZE).fill()
@@ -732,6 +881,7 @@
         }
         return grid;
       }
+
       // Render a single grid tile
       drawTile(i, j) {
         const { x, y } = Utils.gridToScreen(i, j, this.offsetX, this.offsetY);
@@ -747,6 +897,7 @@
         this.ctx.fill();
         this.ctx.restore();
       }
+
       // Redraw entire game state
       render() {
         // Clear canvas
@@ -777,6 +928,7 @@
           this.ui.drawGameOverScreen(this.ctx);
         }
       }
+
       // Check if tower placement is valid
       canPlaceTower(i, j) {
         // Check tile type and existing towers
@@ -796,6 +948,7 @@
         // Ensure all border points can reach base
         return borders.every(b => Pathfinding.aStar(b, { i: 10, j: 10 }, this.grid, tempTowers));
       }
+
       // Initiate a new enemy wave
       startWave() {
         this.waveInLevel++;
@@ -843,6 +996,7 @@
           }
         }
       }
+
       // Update game state
       update(gameTime, gameDeltaTime) {
         if (this.gameState !== 'playing') return;
@@ -884,7 +1038,8 @@
         }
         this.effects.update(performance.now());
       }
-      // Handle mouse interactions and audio context resumption
+
+      // Handle mouse interactions
       setupEvents() {
         this.canvas.addEventListener('mousedown', e => {
           // Resume audio context on first user interaction
@@ -897,43 +1052,11 @@
               // Proceed to next level
               this.resetGame('nextLevel');
             } else if (this.gameState === 'gameover') {
-              // Check for retry button click
-              if (x >= this.canvas.width / 2 - 80 && x <= this.canvas.width / 2 + 80 &&
-                  y >= this.canvas.height / 2 + 50 && y <= this.canvas.height / 2 + 90) {
-                this.resetGame('retry');
-              } else {
-                // Restart game
+              if (!this.ui.buttonManager.handleButtonClick(x, y)) {
                 this.resetGame('full');
               }
             } else {
-              // Handle UI clicks
-              if (y > 630 && y < 680) {
-                const towerIndex = Math.floor((x - 400) / 60);
-                // Select tower
-                if (towerIndex >= 0 && towerIndex < CONSTANTS.TOWER_TYPES.length && 
-                    this.unlockedTowers.includes(towerIndex)) {
-                  this.selectedTower = towerIndex;
-                }
-                // Research new tower
-                else if (x >= 700 && x < 850 && this.money >= 100 && 
-                           this.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length) {
-                  this.unlockTower();
-                  this.money -= 100;
-                }
-                // Toggle pause
-                else if (x >= 860 && x < 1010) {
-                  this.gameState = this.gameState === 'paused' ? 'playing' : 'paused';
-                  // Pause/resume background audio with game state
-                  if (this.gameState === 'paused') {
-                    this.backgroundAudio.pause();
-                  } else {
-                    this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
-                  }
-                }
-                // Toggle speedup 
-                else if (x >= 1020 && x < 1170) {
-                  this.toggleSpeedup();
-                }
+              if (this.ui.buttonManager.handleButtonClick(x, y)) {
                 return;
               }
               // Place tower
@@ -951,7 +1074,7 @@
                 }
                 this.money -= CONSTANTS.TOWER_TYPES[this.selectedTower].cost;
                 this.enemies.forEach(e => e.updatePath());
-                this.playSound('tower_place'); // Play tower placement sound
+                this.playSound('tower_place');
               }
             }
           } else if (e.button === 2) { // Right click
@@ -963,11 +1086,12 @@
                 this.money += Math.floor(CONSTANTS.TOWER_TYPES[this.towers[idx].type].cost / 2);
                 this.towers.splice(idx, 1);
                 this.enemies.forEach(e => e.updatePath());
-                this.playSound('tower_remove'); // Play tower remove sound
+                this.playSound('tower_remove');
               }
             }
           }
         });
+        
         // Update cursor position and hovered tower
         this.canvas.addEventListener('mousemove', e => {
           const x = e.clientX - this.canvas.getBoundingClientRect().left;
@@ -979,21 +1103,14 @@
             this.hoveredTower = this.towers.find(t => t.i === this.cursorPos.i && t.j === this.cursorPos.j) || null;
           }
           // Change cursor style for clickable areas
-          this.canvas.style.cursor = ( y > 630 && y < 680 && 
-            ((x >= 400 && x < 400 + CONSTANTS.TOWER_TYPES.length * 60 && 
-              this.unlockedTowers.includes(Math.floor((x - 400) / 60))) || 
-             (x >= 700 && x < 850 && this.money >= 100 && 
-              this.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length) || 
-             (x >= 860 && x < 1170)) && (this.gameState === 'playing' || this.gameState === 'paused') ) 
-             || (this.gameState === 'gameover' && 
-                 x >= this.canvas.width / 2 - 80 && x <= this.canvas.width / 2 + 80 &&
-                 y >= this.canvas.height / 2 + 50 && y <= this.canvas.height / 2 + 90)
-             ? 'pointer' : 'default';
+          this.canvas.style.cursor = this.ui.buttonManager.isCursorPointer(x, y) ? 'pointer' : 'default';
         });
+
         // Prevent context menu on right-click
         this.canvas.addEventListener('contextmenu', e => e.preventDefault());
       }
-      // Unlock a random locked tower type
+
+      // Unlock a random tower
       unlockTower() {
         const locked = CONSTANTS.TOWER_TYPES.map((_, i) => i)
           .filter(i => !this.unlockedTowers.includes(i));
@@ -1002,10 +1119,12 @@
           this.unlockedTowers.push(locked[index]);
         }
       }
-      // Toggle game speed between normal and 10x
+
+      // Toggle game speed
       toggleSpeedup() {
         this.speedMultiplier = this.speedMultiplier > 2 ? 1.5 : 15;
       }
+
       // Main game loop
       loop(time) {
         // Check for game over and pause background audio
