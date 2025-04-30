@@ -795,10 +795,11 @@
 
       // Toggle pause state
       togglePause() {
-        this.gameState = this.gameState === 'paused' ? 'playing' : 'paused';
-        if (this.gameState === 'paused') {
+        if (this.gameState === 'playing') {
+          this.gameState = 'paused';
           this.backgroundAudio.pause();
-        } else {
+        } else if (this.gameState === 'paused') {
+          this.gameState = 'playing';
           this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
         }
       }
