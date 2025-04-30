@@ -649,7 +649,7 @@
       resumeAudioContext() {
         if (this.audioContext.state === 'suspended') {
           this.audioContext.resume().then(() => {
-            console.log('AudioContext resumes');
+            console.log('AudioContext resumed');
             if (this.backgroundAudio.paused) {
               this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
             }
@@ -691,7 +691,7 @@
           // Retry level: Keep level number and unlocked towers
           // No changes needed, as newLevelNumber and newUnlockedTowers are already set
         } else if (mode === 'nextLevel') {
-          // Next level: Increment level, keep unlocked『Towers
+          // Next level: Increment level, keep unlocked Towers
           this.levelNumber++;
         }
 
