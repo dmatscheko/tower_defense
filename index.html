@@ -480,41 +480,51 @@
                y >= this.y && y < this.y + this.height;
       }
 
-      // Render the button (called by ButtonManager)
+      // Render the button
       draw(ctx, isTower = false, towerIndex = null) {
         if (!this.isVisible(this.game)) return;
+
         const enabled = this.isEnabled(this.game);
+        const text = typeof this.text === 'function' ? this.text(this.game) : this.text;
+
+        ctx.save();
+
         if (isTower) {
-          // Draw tower button
+          // Render tower button
           ctx.fillStyle = '#eee';
           ctx.fillRect(this.x, this.y, this.width, this.height);
+
+          // Draw tower preview
           ctx.save();
           ctx.translate(this.x + 25, this.y + 36);
-          const tempTower = new Tower(0, 0, towerIndex, {
-            ...this.game, offsetX: 0, offsetY: 0
-          });
+          const tempTower = new Tower(0, 0, towerIndex, { ...this.game, offsetX: 0, offsetY: 0 });
           tempTower.draw(ctx, 1, false);
           ctx.restore();
+
+          // Border style based on tower status
           ctx.strokeStyle = this.game.unlockedTowers.includes(towerIndex)
             ? (this.game.selectedTower === towerIndex ? 'yellow' : 'black')
             : 'gray';
           ctx.lineWidth = 2;
           ctx.strokeRect(this.x, this.y, this.width, this.height);
+
+          // Tower button text
           ctx.fillStyle = this.game.unlockedTowers.includes(towerIndex) ? 'black' : 'gray';
           ctx.font = '12px Arial';
-          ctx.fillText(typeof this.text === 'function' ? this.text(this.game) : this.text, this.x, this.y + 61);
+          ctx.fillText(text, this.x, this.y + 61);
         } else {
-          // Draw action button
+          // Render action button
           ctx.fillStyle = enabled ? '#eee' : 'gray';
           ctx.fillRect(this.x, this.y, this.width, this.height);
+
+          // Action button text
           ctx.fillStyle = 'black';
-          ctx.font = this.type === 'retry' ? '16px Arial' : '16px Arial';
-          ctx.fillText(
-            typeof this.text === 'function' ? this.text(this.game) : this.text,
-            this.x + 10,
-            this.y + (this.type === 'retry' ? 25 : 30)
-          );
+          ctx.font = '16px Arial';
+          const textY = this.type === 'retry' ? 25 : 30;
+          ctx.fillText(text, this.x + 10, this.y + textY);
         }
+
+        ctx.restore();
       }
 
       // Handle button click
@@ -607,20 +617,12 @@
           }
         ];
         // Initialize buttons
-        this.buttons = [
-          ...this.TOWER_BUTTONS.map(config => new Button(config, game)),
-          ...this.ACTION_BUTTONS.map(config => new Button(config, game))
-        ];
+        this.buttons = [...this.TOWER_BUTTONS, ...this.ACTION_BUTTONS].map(config => new Button(config, this.game));
       }
 
-      // Handle button clicks
+      // Handle button clicks. Returns true if a button was clicked
       handleButtonClick(x, y) {
-        for (const button of this.buttons) {
-          if (button.isPointInside(x, y) && button.handleClick()) {
-            return true;
-          }
-        }
-        return false;
+        return this.buttons.some(button => button.isPointInside(x, y) && button.handleClick());
       }
 
       // Check if cursor should be pointer
@@ -630,13 +632,9 @@
 
       // Draw all buttons
       draw(ctx, buttonType = null) {
-        this.buttons.forEach((button, index) => {
-          if (buttonType !== null && buttonType !== button.type) return;
-          if (button.type === 'tower') {
-            button.draw(ctx, true, button.towerIndex);
-          } else {
-            button.draw(ctx, false);
-          }
+        this.buttons.forEach(button => {
+          if (buttonType && button.type !== buttonType) return;
+          button.draw(ctx, button.type === 'tower', button.towerIndex);
         });
       }
     }
