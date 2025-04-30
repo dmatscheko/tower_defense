@@ -21,7 +21,7 @@ A browser-based tower defense game with an isometric city grid, featuring multip
 ![Tiny Tower Defense Screenshot](screenshot.png)
 
 ## How to Play
-1. Open `index.html` in a modern web browser (e.g., Chrome, Firefox, Edge). For sound effects, run `python3 -m http.server 8000` in the same directory as the `index.html` and open `http://[::]:8000/` in a web browser.
+1. Open `index.html` in a modern web browser (e.g., Chrome, Firefox, Edge). To enable the browser to load sound effects, serve the repository with a web server. For example, run `python3 -m http.server 8000` in the directory containing `index.html`, then open `http://[::]:8000/` in a browser.
 2. **Controls**:
    - **Left-click**: Select towers from the UI, place towers on valid tiles (streets/parking lots), or interact with buttons (Research, Pause, Speed).
    - **Right-click**: Remove a placed tower (refunds half the cost).
