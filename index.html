@@ -8,6 +8,7 @@
     /* Style canvas with a border */
     canvas {
       border: 1px solid black;
+      display: block; /* Ensure canvas is a block element for centering */
     }
     /* Center canvas and set background */
     body {
@@ -757,6 +758,39 @@
         requestAnimationFrame(this.loop.bind(this));
       }
 
+      // Scale canvas to fit window while maintaining aspect ratio
+      scaleCanvas() {
+        const canvasWidth = 1200;
+        const canvasHeight = 700;
+        const aspectRatio = canvasWidth / canvasHeight;
+
+        // Get window dimensions
+        const windowWidth = window.innerWidth;
+        const windowHeight = window.innerHeight;
+        const windowAspectRatio = windowWidth / windowHeight;
+
+        let newWidth, newHeight;
+        if (windowWidth < canvasWidth || windowHeight < canvasHeight) {
+          // Window is smaller than canvas, scale down to fit
+          if (windowAspectRatio > aspectRatio) {
+            // Window is wider than canvas, fit to height
+            newHeight = windowHeight;
+            newWidth = newHeight * aspectRatio;
+          } else {
+            // Window is taller than canvas, fit to width
+            newWidth = windowWidth;
+            newHeight = newWidth / aspectRatio;
+          }
+        } else {
+          // Window is larger than canvas, use original size
+          newWidth = canvasWidth;
+          newHeight = canvasHeight;
+        }
+
+        this.canvas.style.width = `${newWidth}px`;
+        this.canvas.style.height = `${newHeight}px`;
+      }
+
       // Toggle fullscreen and orientation
       toggleFullscreen() {
         if (!this.isFullscreen) {
@@ -778,6 +812,8 @@
           }
           this.isFullscreen = false;
         }
+        // Scale canvas after fullscreen change
+        this.scaleCanvas();
       }
 
       // Load background and sound effect audio files
@@ -896,6 +932,8 @@
         if (this.audioContext.state === 'running' && this.gameState === 'playing') {
           this.backgroundAudio.play().catch(e => console.error('Background audio play failed:', e));
         }
+        // Reset canvas scaling
+        this.scaleCanvas();
       }
 
       // Create city grid with streets, buildings, and base
