@@ -1130,8 +1130,13 @@
         this.canvas.addEventListener('mousedown', e => {
           // Resume audio context on first user interaction
           this.resumeAudioContext();
-          const x = e.clientX - this.canvas.getBoundingClientRect().left;
-          const y = e.clientY - this.canvas.getBoundingClientRect().top;
+          const rect = this.canvas.getBoundingClientRect();
+          // Calculate scaling factors
+          const scaleX = this.canvas.width / (rect.width || 1); // Avoid division by zero
+          const scaleY = this.canvas.height / (rect.height || 1);
+          // Adjust coordinates for canvas scaling
+          const x = (e.clientX - rect.left) * scaleX;
+          const y = (e.clientY - rect.top) * scaleY;
           
           if (e.button === 0) { // Left click
             if (this.gameState === 'win') {
@@ -1180,8 +1185,13 @@
         
         // Update cursor position and hovered tower
         this.canvas.addEventListener('mousemove', e => {
-          const x = e.clientX - this.canvas.getBoundingClientRect().left;
-          const y = e.clientY - this.canvas.getBoundingClientRect().top;
+          const rect = this.canvas.getBoundingClientRect();
+          // Calculate scaling factors
+          const scaleX = this.canvas.width / (rect.width || 1); // Avoid division by zero
+          const scaleY = this.canvas.height / (rect.height || 1);
+          // Adjust coordinates for canvas scaling
+          const x = (e.clientX - rect.left) * scaleX;
+          const y = (e.clientY - rect.top) * scaleY;
           this.cursorPos = Utils.screenToGrid(x, y, this.offsetX, this.offsetY);
           // Update hovered tower
           this.hoveredTower = null;
