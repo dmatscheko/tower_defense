@@ -19,10 +19,28 @@
       height: 100vh;
       background-color: #f0f0f0;
     }
+    /* Fullscreen button styles */
+    #fullscreenButton {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 10px;
+      background-color: #eee;
+      border: 1px solid black;
+      cursor: pointer;
+      display: none; /* Hidden by default */
+    }
+    /* Show button only on mobile devices */
+    @media (max-width: 768px) {
+      #fullscreenButton {
+        display: block;
+      }
+    }
   </style>
 </head>
 <body>
   <canvas id="gameCanvas" width="1200" height="700"></canvas>
+  <button id="fullscreenButton">Toggle Fullscreen</button>
   <audio id="backgroundAudio" loop preload="auto">
     <source src="sound/static_rumble.mp3" type="audio/mpeg">
     Your browser does not support the audio element.
@@ -701,6 +719,7 @@
         this.offsetX = 600; // Grid offset X
         this.offsetY = 0;   // Grid offset Y
         this.ui = new UIManager(this); // UI manager
+        this.isFullscreen = false; // Track fullscreen state
 
         // Initialize Web Audio API
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -736,6 +755,29 @@
 
         // Start game loop
         requestAnimationFrame(this.loop.bind(this));
+      }
+
+      // Toggle fullscreen and orientation
+      toggleFullscreen() {
+        if (!this.isFullscreen) {
+          // Enter fullscreen
+          document.documentElement.requestFullscreen().catch(e => console.error('Fullscreen request failed:', e));
+          // Lock to landscape orientation
+          if (screen.orientation && screen.orientation.lock) {
+            screen.orientation.lock('landscape').catch(e => console.error('Orientation lock failed:', e));
+          }
+          this.isFullscreen = true;
+        } else {
+          // Exit fullscreen
+          if (document.fullscreenElement) {
+            document.exitFullscreen().catch(e => console.error('Exit fullscreen failed:', e));
+          }
+          // Unlock orientation
+          if (screen.orientation && screen.orientation.unlock) {
+            screen.orientation.unlock();
+          }
+          this.isFullscreen = false;
+        }
       }
 
       // Load background and sound effect audio files
@@ -1114,6 +1156,12 @@
 
         // Prevent context menu on right-click
         this.canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        // Setup fullscreen button event
+        const fullscreenButton = document.getElementById('fullscreenButton');
+        fullscreenButton.addEventListener('click', () => {
+          this.toggleFullscreen();
+        });
 
         // Add keypress event listener
         document.addEventListener('keypress', e => {
