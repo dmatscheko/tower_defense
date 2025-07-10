@@ -40,7 +40,7 @@
   </style>
 </head>
 <body>
-  <canvas id="gameCanvas" width="1200" height="700"></canvas>
+  <canvas id="gameCanvas" width="1200" height="770"></canvas>
   <button id="fullscreenButton">Toggle Fullscreen</button>
   <audio id="backgroundAudio" loop preload="auto">
     <source src="sound/static_rumble.mp3" type="audio/mpeg">
@@ -57,11 +57,35 @@
         PARKING_LOT: 'gray',          // Parking lot tile color
         BASE: 'yellow'                // Base tile color
       },
-      TOWER_TYPES: [                  // Tower definitions
-        { name: 'Basic', cost: 50, range: 3, color: 'red', effect: 'damage', damage: 20, cooldown: 500 },
-        { name: 'Slow', cost: 75, range: 5, color: 'blue', effect: 'slow', slowFactor: 0.5, slowDuration: 2000, cooldown: 1000 },
-        { name: 'Area', cost: 100, range: 4, color: 'purple', effect: 'area', areaDamage: 10, cooldown: 1000 },
-        { name: 'DoT', cost: 100, range: 4, color: 'pink', effect: 'dot', dotDamage: 12, dotDuration: 40000, cooldown: 1000 }
+      TOWER_TYPES: [                  // Tower definitions with upgrades
+        { 
+          name: 'Basic', cost: 50, range: 3, color: 'red', effect: 'damage', damage: 20, cooldown: 500,
+          upgrades: [
+            { costMultiplier: 1.5, damageMultiplier: 1.5, rangeMultiplier: 1.1 },
+            { costMultiplier: 2, damageMultiplier: 2, rangeMultiplier: 1.2 }
+          ]
+        },
+        { 
+          name: 'Slow', cost: 75, range: 5, color: 'blue', effect: 'slow', slowFactor: 0.5, slowDuration: 2000, cooldown: 1000,
+          upgrades: [
+            { costMultiplier: 1.5, slowFactor: 0.4, slowDuration: 3000, rangeMultiplier: 1.1 },
+            { costMultiplier: 2, slowFactor: 0.3, slowDuration: 4000, rangeMultiplier: 1.2, addFreeze: true } // Adds brief freeze at level 3
+          ]
+        },
+        { 
+          name: 'Area', cost: 100, range: 4, color: 'purple', effect: 'area', areaDamage: 10, cooldown: 1000,
+          upgrades: [
+            { costMultiplier: 1.5, areaDamageMultiplier: 1.5, rangeMultiplier: 1.2 },
+            { costMultiplier: 2, areaDamageMultiplier: 2, rangeMultiplier: 1.3 }
+          ]
+        },
+        { 
+          name: 'DoT', cost: 100, range: 4, color: 'pink', effect: 'dot', dotDamage: 12, dotDuration: 40000, cooldown: 1000,
+          upgrades: [
+            { costMultiplier: 1.5, dotDamageMultiplier: 1.5, dotDurationMultiplier: 1.2 },
+            { costMultiplier: 2, dotDamageMultiplier: 2, dotDurationMultiplier: 1.5 }
+          ]
+        }
       ],
       ENEMY_TYPES: [                  // Enemy definitions
         { name: 'Basic', baseHealth: 100, healthPerLevel: 20, speed: 0.5, damage: 10, color: 'black', radius: 10, reward: 5, spawnMultiplier: 1.0 },
@@ -70,7 +94,8 @@
       ],
       INITIAL_MONEY: 150,             // Starting money
       BASE_HEALTH: 100,               // Starting base health
-      UI: { HEIGHT: 92, Y: 608 }      // UI position and size
+      UI: { HEIGHT: 192, Y: 608 },      // UI position and size (increased height for additional row)
+      MAX_WAVES_PER_LEVEL: 25         // Waves per level before endless option
     };
 
     // Seeded random number generator (Linear Congruential Generator)
@@ -158,6 +183,12 @@
               ctx.fillStyle = 'pink';
               ctx.fill();
               break;
+            case 'upgradeGlow':
+              ctx.ellipse(e.x, e.y, 20 * progress, 10 * progress, 0, 0, Math.PI * 2);
+              ctx.strokeStyle = `rgba(255, 255, 0, ${1 - progress})`;
+              ctx.lineWidth = 2;
+              ctx.stroke();
+              break;
           }
           ctx.restore();
         });
@@ -230,11 +261,51 @@
         this.j = j;                   // Grid column
         this.type = type;             // Tower type index
         this.game = game;             // Game instance
-        this.spec = CONSTANTS.TOWER_TYPES[type]; // Tower specifications
+        this.level = 1;               // Starting level
+        this.maxLevel = CONSTANTS.TOWER_TYPES[type].upgrades.length + 1; // Max level
+        this.updateSpecs();           // Initialize specs based on level
         this.lastShot = 0;            // Last shot timestamp
       }
 
-      // Render tower with range circle
+      // Update specs based on current level
+      updateSpecs() {
+        const baseSpec = CONSTANTS.TOWER_TYPES[this.type];
+        this.spec = { ...baseSpec };
+        for (let lvl = 1; lvl < this.level; lvl++) {
+          const upgrade = baseSpec.upgrades[lvl - 1];
+          if (upgrade.damageMultiplier) this.spec.damage *= upgrade.damageMultiplier;
+          if (upgrade.rangeMultiplier) this.spec.range *= upgrade.rangeMultiplier;
+          if (upgrade.areaDamageMultiplier) this.spec.areaDamage *= upgrade.areaDamageMultiplier;
+          if (upgrade.dotDamageMultiplier) this.spec.dotDamage *= upgrade.dotDamageMultiplier;
+          if (upgrade.dotDurationMultiplier) this.spec.dotDuration *= upgrade.dotDurationMultiplier;
+          if (upgrade.slowFactor) this.spec.slowFactor = upgrade.slowFactor;
+          if (upgrade.slowDuration) this.spec.slowDuration = upgrade.slowDuration;
+          if (upgrade.addFreeze) this.spec.addFreeze = true; // Special effect for level 3 slow
+        }
+      }
+
+      // Upgrade the tower if possible
+      upgrade() {
+        if (this.level >= this.maxLevel) return false;
+        const upgradeCost = this.getUpgradeCost();
+        if (this.game.money < upgradeCost) return false;
+        this.level++;
+        this.updateSpecs();
+        this.game.money -= upgradeCost;
+        const { x, y } = Utils.gridToScreen(this.i, this.j, this.game.offsetX, this.game.offsetY);
+        this.game.effects.add('upgradeGlow', { x, y }, 500);
+        return true;
+      }
+
+      // Get cost for next upgrade
+      getUpgradeCost() {
+        if (this.level >= this.maxLevel) return Infinity;
+        const baseCost = CONSTANTS.TOWER_TYPES[this.type].cost;
+        const upgrade = CONSTANTS.TOWER_TYPES[this.type].upgrades[this.level - 1];
+        return Math.floor(baseCost * upgrade.costMultiplier);
+      }
+
+      // Render tower with range circle and level indicator
       draw(ctx, alpha = 1, showRange = false) {
         const { x, y } = Utils.gridToScreen(this.i, this.j, this.game.offsetX, this.game.offsetY);
         ctx.save();
@@ -256,6 +327,10 @@
         ctx.closePath();
         ctx.fillStyle = '#fff4';
         ctx.fill();
+        // Draw level indicator
+        ctx.fillStyle = 'yellow';
+        ctx.font = '12px Arial';
+        ctx.fillText(`Lv${this.level}`, x - 10, y - 20);
         // Draw range circle if requested
         if (showRange) {
           ctx.beginPath();
@@ -295,6 +370,10 @@
             // Apply slow effect
             target.slowFactor = this.spec.slowFactor;
             target.slowEnd = gameTime + this.spec.slowDuration;
+            if (this.spec.addFreeze) {
+              target.speed = 0; // Freeze for 1s
+              setTimeout(() => { if (target) target.speed = target.baseSpeed * target.slowFactor; }, 1000);
+            }
             this.game.effects.add('slowAura', { x: target.position.x, y: target.position.y }, 100);
             this.game.playSound('slow_effect'); // Play slow effect sound
             break;
@@ -325,11 +404,20 @@
         this.game = game;             // Game instance
         this.type = type;             // Enemy type index
         const enemySpec = CONSTANTS.ENEMY_TYPES[type];
+        let healthMultiplier = 1;
+        if (game.endlessMode) {
+          healthMultiplier = Math.pow(1.05, game.waveInLevel - CONSTANTS.MAX_WAVES_PER_LEVEL);
+        }
         this.maxHealth = enemySpec.baseHealth +
                          enemySpec.healthPerLevel * (game.levelNumber - 1) +
                          game.waveInLevel * 8;
+        this.maxHealth *= healthMultiplier;
         this.health = this.maxHealth;
-        this.baseSpeed = enemySpec.speed * CONSTANTS.TILE.WIDTH / 1000;
+        let speedMultiplier = 1;
+        if (game.endlessMode) {
+          speedMultiplier = 1 + 0.02 * (game.waveInLevel - CONSTANTS.MAX_WAVES_PER_LEVEL);
+        }
+        this.baseSpeed = enemySpec.speed * CONSTANTS.TILE.WIDTH / 1000 * speedMultiplier;
         this.speed = this.baseSpeed;
         this.damage = enemySpec.damage;
         this.color = enemySpec.color;
@@ -496,7 +584,7 @@
         this.width = config.width || 150;      // Button width
         this.height = config.height || 50;    // Button height
         this.text = config.text;        // Button text (function or string)
-        this.type = config.type;        // Button type (tower, research, pause, speed, retry)
+        this.type = config.type;        // Button type (tower, research, pause, speed, retry, upgrade, sell, endless)
         this.towerIndex = config.towerIndex; // Tower index for tower buttons
         this.isEnabled = config.isEnabled || (() => true); // Enabled condition
         this.isVisible = config.isVisible || (() => true); // Visibility condition
@@ -530,7 +618,7 @@
           ctx.restore();
           // Border style based on tower status
           ctx.strokeStyle = enabled
-            ? (this.game.selectedTower === towerIndex ? 'yellow' : 'black')
+            ? (this.game.selectedTowerType === towerIndex ? 'yellow' : 'black')
             : 'gray';
           ctx.lineWidth = 2;
           ctx.strokeRect(this.x, this.y, this.width, this.height);
@@ -575,7 +663,7 @@
           towerIndex: index,
           isEnabled: game => game.unlockedTowers.includes(index),
           onClick: game => {
-            game.selectedTower = index;
+            game.selectedTowerType = index;
             return true;
           }
         }));
@@ -623,6 +711,88 @@
               game.resetGame('retry');
               return true;
             }
+          },
+          {
+            x: 10,
+            y: 710,
+            text: game => {
+              if (!game.selectedTowerInstance) return '';
+              const cost = game.selectedTowerInstance.getUpgradeCost();
+              return `Upgrade (${cost === Infinity ? '∞' : cost})`;
+            },
+            type: 'upgrade',
+            isEnabled: game => game.selectedTowerInstance && game.selectedTowerInstance.level < game.selectedTowerInstance.maxLevel && game.money >= game.selectedTowerInstance.getUpgradeCost(),
+            isVisible: game => game.selectedTowerInstance !== null,
+            onClick: game => {
+              if (game.selectedTowerInstance.upgrade()) {
+                // game.selectedTowerInstance = null;
+                return true;
+              }
+              return false;
+            }
+          },
+          {
+            x: 170,
+            y: 710,
+            text: game => game.selectedTowerInstance ? `Sell (${Math.floor(CONSTANTS.TOWER_TYPES[game.selectedTowerInstance.type].cost / 2)})` : '',
+            type: 'sell',
+            isEnabled: () => true,
+            isVisible: game => game.selectedTowerInstance !== null,
+            onClick: game => {
+              const idx = game.towers.findIndex(t => t === game.selectedTowerInstance);
+              if (idx !== -1) {
+                game.money += Math.floor(CONSTANTS.TOWER_TYPES[game.selectedTowerInstance.type].cost / 2);
+                game.towers.splice(idx, 1);
+                game.enemies.forEach(e => e.updatePath());
+                game.playSound('tower_remove');
+                game.selectedTowerInstance = null;
+              }
+              return true;
+            }
+          },
+          {
+            x: 200,
+            y: 450,
+            text: 'Retry Level',
+            type: 'retryWin',
+            width: 240,
+            height: 50,
+            isEnabled: () => true,
+            isVisible: game => game.gameState === 'win',
+            onClick: game => {
+              game.resetGame('retry');
+              return true;
+            }
+          },
+          {
+            x: 450,
+            y: 370,
+            text: 'Next Level',
+            type: 'nextLevel',
+            width: 300,
+            height: 60,
+            isEnabled: () => true,
+            isVisible: game => game.gameState === 'win',
+            onClick: game => {
+              game.resetGame('nextLevel');
+              return true;
+            }
+          },
+          {
+            x: 760,
+            y: 450,
+            text: 'Enter Endless Mode',
+            type: 'endless',
+            width: 240,
+            height: 50,
+            isEnabled: () => true,
+            isVisible: game => game.gameState === 'win',
+            onClick: game => {
+              game.endlessMode = true;
+              game.gameState = 'playing';
+              game.startWave();
+              return true;
+            }
           }
         ];
         // Initialize buttons
@@ -665,19 +835,28 @@
         ctx.font = '20px Arial';
         ctx.fillText(`Money: ${this.game.money}`, 10, 640);
         ctx.fillText(`Base Health: ${this.game.baseHealth}`, 10, 670);
-        ctx.fillText(`Level: ${this.game.levelNumber} Wave: ${(this.game.waveInLevel > 0) ? this.game.waveInLevel : '1'}`, 200, 640);
-        ctx.fillText(`Enemies Left: ${this.game.enemies.length + this.game.spawnQueue.length}`, 200, 670);
+        let levelText = `Level: ${this.game.levelNumber}`;
+        if (this.game.endlessMode) {
+          levelText += ' (Endless)';
+        }
+        ctx.fillText(levelText, 200, 640);
+        ctx.fillText(`Wave: ${(this.game.waveInLevel > 0) ? this.game.waveInLevel : '1'}`, 200, 670);
+        ctx.fillText(`Enemies Left: ${this.game.enemies.length + this.game.spawnQueue.length}`, 10, 700);
          // Draw buttons
         this.buttonManager.draw(ctx);
+        // Draw selected tower info
+        if (this.game.selectedTowerInstance) {
+          ctx.fillText(`Selected: ${CONSTANTS.TOWER_TYPES[this.game.selectedTowerInstance.type].name} Lv${this.game.selectedTowerInstance.level}`, 420, 730);
+        }
       }
 
       // Show tower placement preview
       drawPreview(ctx) {
-        if (this.game.selectedTower === null || !this.game.cursorPos) return;
+        if (this.game.selectedTowerType === null || !this.game.cursorPos) return;
         const { i, j } = this.game.cursorPos;
         // Draw preview if placement is valid
-        if (this.game.canPlaceTower(i, j) && this.game.money >= CONSTANTS.TOWER_TYPES[this.game.selectedTower].cost) {
-          new Tower(i, j, this.game.selectedTower, this.game).draw(ctx, 0.7, true);
+        if (this.game.canPlaceTower(i, j) && this.game.money >= CONSTANTS.TOWER_TYPES[this.game.selectedTowerType].cost) {
+          new Tower(i, j, this.game.selectedTowerType, this.game).draw(ctx, 0.7, true);
         }
       }
 
@@ -689,10 +868,11 @@
         ctx.fillStyle = '#fffe';
         ctx.textAlign = 'center';
         ctx.font = '60px Arial';
-        ctx.fillText('You Win!', this.game.canvas.width / 2, this.game.canvas.height / 2 - 30);
+        ctx.fillText('Level Complete!', this.game.canvas.width / 2, this.game.canvas.height / 2 - 60);
         ctx.font = '20px Arial';
-        ctx.fillText('Click to proceed to next level', this.game.canvas.width / 2, this.game.canvas.height / 2 + 20);
+        // ctx.fillText('Proceed to next level, enter endless mode, or retry.', this.game.canvas.width / 2, this.game.canvas.height / 2);
         ctx.restore();
+        this.buttonManager.buttons.filter(button => ['endless', 'nextLevel', 'retryWin'].includes(button.type)).forEach(button => button.draw(ctx, button.towerIndex));
       }
 
       // Render game over screen
@@ -705,7 +885,7 @@
         ctx.font = '60px Arial';
         ctx.fillText('Game Over', this.game.canvas.width / 2, this.game.canvas.height / 2 - 30);
         ctx.font = '20px Arial';
-        ctx.fillText('Click anywhere to restart', this.game.canvas.width / 2, this.game.canvas.height / 2 + 20);
+        // ctx.fillText('Click anywhere to restart', this.game.canvas.width / 2, this.game.canvas.height / 2 + 20);
         ctx.restore();
         this.buttonManager.draw(ctx, 'retry'); // Draw retry button
       }
@@ -721,6 +901,7 @@
         this.offsetY = 0;   // Grid offset Y
         this.ui = new UIManager(this); // UI manager
         this.isFullscreen = false; // Track fullscreen state
+        this.cheatBuffer = ''; // Initialize cheat buffer
 
         // Initialize Web Audio API
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -761,7 +942,7 @@
       // Scale canvas to fit window while maintaining aspect ratio
       scaleCanvas() {
         const canvasWidth = 1200;
-        const canvasHeight = 700;
+        const canvasHeight = 770;
         const aspectRatio = canvasWidth / canvasHeight;
 
         // Get window dimensions
@@ -898,12 +1079,15 @@
           lastWaveTime: this.gameTime || 0,
           gameState: 'playing',
           effects: new EffectManager(),
-          selectedTower: 0,
+          selectedTowerType: 0,
+          selectedTowerInstance: null,
           cursorPos: null,
           hoveredTower: null,
           gameTime: 0,
           previousTime: 0,
-          speedMultiplier: 1.5
+          speedMultiplier: 1.5,
+          endlessMode: false,
+          cheatBuffer: ''
         });
 
         // Mode-specific adjustments
@@ -1001,7 +1185,8 @@
           this.effects.draw(this.ctx);
         }
         this.towers.forEach(t => {
-          const showRange = this.hoveredTower && t.i === this.hoveredTower.i && t.j === this.hoveredTower.j;
+          const showRange = this.hoveredTower && t.i === this.hoveredTower.i && t.j === this.hoveredTower.j ||
+                            this.selectedTowerInstance === t;
           t.draw(this.ctx, 1, showRange);
         });
         if (['playing', 'paused'].includes(this.gameState)) {
@@ -1118,7 +1303,7 @@
           this.lastWaveTime = gameTime;
           this.money += 50;
           // Check for level completion
-          if (this.waveInLevel >= 25) {
+          if (this.waveInLevel >= CONSTANTS.MAX_WAVES_PER_LEVEL && !this.endlessMode) {
             this.gameState = 'win';
           }
         }
@@ -1140,8 +1325,9 @@
           
           if (e.button === 0) { // Left click
             if (this.gameState === 'win') {
-              // Proceed to next level
-              this.resetGame('nextLevel');
+              if (!this.ui.buttonManager.handleButtonClick(x, y)) {
+                this.resetGame('nextLevel');
+              }
             } else if (this.gameState === 'gameover') {
               if (!this.ui.buttonManager.handleButtonClick(x, y)) {
                 this.resetGame('full');
@@ -1150,12 +1336,20 @@
               if (this.ui.buttonManager.handleButtonClick(x, y)) {
                 return;
               }
-              // Place tower
+              // Select existing tower or place new one
               const pos = Utils.screenToGrid(x, y, this.offsetX, this.offsetY);
-              if (pos && this.selectedTower !== null && 
-                  this.money >= CONSTANTS.TOWER_TYPES[this.selectedTower].cost && 
+              if (pos && y < CONSTANTS.UI.Y) {
+                const existingTower = this.towers.find(t => t.i === pos.i && t.j === pos.j);
+                if (existingTower) {
+                  this.selectedTowerInstance = existingTower;
+                  return;
+                } 
+              }
+              // Place tower if no existing selected
+              if (pos && this.selectedTowerType !== null && 
+                  this.money >= CONSTANTS.TOWER_TYPES[this.selectedTowerType].cost && 
                   this.canPlaceTower(pos.i, pos.j)) {
-                const newTower = new Tower(pos.i, pos.j, this.selectedTower, this);
+                const newTower = new Tower(pos.i, pos.j, this.selectedTowerType, this);
                 // Insert tower in sorted order based on i + j to ensure correct rendering depth
                 const insertIndex = this.towers.findIndex(t => (t.i + t.j) > (pos.i + pos.j));
                 if (insertIndex === -1) {
@@ -1163,13 +1357,19 @@
                 } else {
                   this.towers.splice(insertIndex, 0, newTower);
                 }
-                this.money -= CONSTANTS.TOWER_TYPES[this.selectedTower].cost;
+                this.money -= CONSTANTS.TOWER_TYPES[this.selectedTowerType].cost;
                 this.enemies.forEach(e => e.updatePath());
                 this.playSound('tower_place');
+              } else if (pos && y < CONSTANTS.UI.Y) {
+                this.selectedTowerInstance = null;
               }
             }
           } else if (e.button === 2) { // Right click
-            // Remove tower
+            // Deselect or remove tower
+            if (this.selectedTowerInstance) {
+              this.selectedTowerInstance = null;
+              return;
+            }
             const pos = Utils.screenToGrid(x, y, this.offsetX, this.offsetY);
             if (pos) {
               const idx = this.towers.findIndex(t => t.i === pos.i && t.j === pos.j);
@@ -1219,7 +1419,8 @@
           if (['1', '2', '3', '4'].includes(e.key)) {
             const towerIndex = parseInt(e.key) - 1;
             if (this.unlockedTowers.includes(towerIndex)) {
-              this.selectedTower = towerIndex;
+              this.selectedTowerType = towerIndex;
+              this.selectedTowerInstance = null;
             }
           }
           // Toggle speed x10 with 's' key
@@ -1249,7 +1450,7 @@
             this.cheatBuffer = '';
           } else if (this.cheatBuffer === 'money') {
             // Unlock all towers
-            this.money += 1000;
+            this.money += 5000;
             this.cheatBuffer = '';
           }
         });
