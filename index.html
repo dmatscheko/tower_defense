@@ -1076,6 +1076,7 @@
         this.random = new SeededRandom(12345 + this.levelNumber);
         this.unlockRandom = new SeededRandom(12345 + this.levelNumber);
         this.grid = this.generateCity();
+        this.createGridCache();
         // Start first wave
         this.startWave();
         // Resume background audio if playing
@@ -1110,38 +1111,46 @@
         return grid;
       }
 
+      // Draw the isometric grid into a cache
+      createGridCache() {
+        this.gridCache = document.createElement('canvas');
+        this.gridCache.width = this.canvas.width;
+        this.gridCache.height = CONSTANTS.UI.Y;
+        const cacheCtx = this.gridCache.getContext('2d');
+        for (let i = 0; i < CONSTANTS.GRID_SIZE; i++) {
+          for (let j = 0; j < CONSTANTS.GRID_SIZE; j++) {
+            this.drawTile(i, j, cacheCtx);
+          }
+        }
+      }
+
       // Draw a single isometric tile
-      drawTile(i, j) {
+      drawTile(i, j, ctx) {
         const { x, y } = Utils.gridToScreen(i, j, this.offsetX, this.offsetY);
-        this.ctx.save();
+        ctx.save();
         // Draw diamond shape
-        this.ctx.beginPath();
-        this.ctx.moveTo(x, y - CONSTANTS.TILE.HEIGHT / 2);
-        this.ctx.lineTo(x + CONSTANTS.TILE.WIDTH / 2, y);
-        this.ctx.lineTo(x, y + CONSTANTS.TILE.HEIGHT / 2);
-        this.ctx.lineTo(x - CONSTANTS.TILE.WIDTH / 2, y);
-        this.ctx.closePath();
+        ctx.beginPath();
+        ctx.moveTo(x, y - CONSTANTS.TILE.HEIGHT / 2);
+        ctx.lineTo(x + CONSTANTS.TILE.WIDTH / 2, y);
+        ctx.lineTo(x, y + CONSTANTS.TILE.HEIGHT / 2);
+        ctx.lineTo(x - CONSTANTS.TILE.WIDTH / 2, y);
+        ctx.closePath();
         // Set color (procedural for buildings)
         let fillColor = this.grid[i][j];
         if (fillColor === CONSTANTS.COLORS.BUILDING) {
           const hue = 120 + ((this.levelNumber * 133) % 103) - 50;
           fillColor = `hsl(${hue}, 50%, 33%)`;
         }
-        this.ctx.fillStyle = fillColor;
-        this.ctx.fill();
-        this.ctx.restore();
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+        ctx.restore();
       }
 
       // Render the entire scene: grid, paths, enemies, towers, effects, UI
       render() {
         // Clear canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        // Draw grid tiles
-        for (let i = 0; i < CONSTANTS.GRID_SIZE; i++) {
-          for (let j = 0; j < CONSTANTS.GRID_SIZE; j++) {
-            this.drawTile(i, j);
-          }
-        }
+        this.ctx.drawImage(this.gridCache, 0, 0);
         // Draw enemy paths, enemies, effects, towers
         this.enemies.forEach(e => e.drawPath(this.ctx));
         this.enemies.forEach(e => e.draw(this.ctx));
