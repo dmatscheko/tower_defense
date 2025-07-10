@@ -327,10 +327,16 @@
         ctx.closePath();
         ctx.fillStyle = '#fff4';
         ctx.fill();
-        // Draw level indicator
+        // Draw level indicator with shadow
         ctx.fillStyle = 'yellow';
         ctx.font = '12px Arial';
+        ctx.shadowColor = 'black';
+        ctx.shadowBlur = 2;
+        ctx.shadowOffsetX = 1;
+        ctx.shadowOffsetY = 1;
         ctx.fillText(`Lv${this.level}`, x - 10, y - 20);
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
         // Draw range circle if requested
         if (showRange) {
           ctx.beginPath();
@@ -662,6 +668,7 @@
           type: 'tower',
           towerIndex: index,
           isEnabled: game => game.unlockedTowers.includes(index),
+          isVisible: game => ['playing', 'paused'].includes(game.gameState),
           onClick: game => {
             game.selectedTowerType = index;
             return true;
@@ -674,6 +681,7 @@
             text: 'Research (100)',
             type: 'research',
             isEnabled: game => game.money >= 100 && game.unlockedTowers.length < CONSTANTS.TOWER_TYPES.length,
+            isVisible: game => ['playing', 'paused'].includes(game.gameState),
             onClick: game => {
               game.unlockTower();
               game.money -= 100;
@@ -685,6 +693,7 @@
             text: game => game.gameState === 'paused' ? 'Resume' : 'Pause',
             type: 'pause',
             isEnabled: () => true,
+            isVisible: game => ['playing', 'paused'].includes(game.gameState),
             onClick: game => {
               game.togglePause();
               return true;
@@ -695,6 +704,7 @@
             text: game => game.speedMultiplier > 2 ? 'Speed x10  >>' : 'Speed x10',
             type: 'speed',
             isEnabled: () => true,
+            isVisible: game => ['playing', 'paused'].includes(game.gameState),
             onClick: game => {
               game.speedMultiplier = game.speedMultiplier > 2 ? 1.5 : 15;
               return true;
@@ -702,7 +712,7 @@
           },
           {
             x: 525,
-            y: 390,
+            y: 450,
             text: 'Retry Level',
             type: 'retry',
             isEnabled: () => true,
@@ -718,11 +728,11 @@
             text: game => {
               if (!game.selectedTowerInstance) return '';
               const cost = game.selectedTowerInstance.getUpgradeCost();
-              return `Upgrade (${cost === Infinity ? '∞' : cost})`;
+              return `Upgrade (${cost === Infinity ? 'done' : cost})`;
             },
             type: 'upgrade',
             isEnabled: game => game.selectedTowerInstance && game.selectedTowerInstance.level < game.selectedTowerInstance.maxLevel && game.money >= game.selectedTowerInstance.getUpgradeCost(),
-            isVisible: game => game.selectedTowerInstance !== null,
+            isVisible: game => game.selectedTowerInstance !== null && ['playing', 'paused'].includes(game.gameState),
             onClick: game => {
               if (game.selectedTowerInstance.upgrade()) {
                 // game.selectedTowerInstance = null;
@@ -737,7 +747,7 @@
             text: game => game.selectedTowerInstance ? `Sell (${Math.floor(CONSTANTS.TOWER_TYPES[game.selectedTowerInstance.type].cost / 2)})` : '',
             type: 'sell',
             isEnabled: () => true,
-            isVisible: game => game.selectedTowerInstance !== null,
+            isVisible: game => game.selectedTowerInstance !== null && ['playing', 'paused'].includes(game.gameState),
             onClick: game => {
               const idx = game.towers.findIndex(t => t === game.selectedTowerInstance);
               if (idx !== -1) {
@@ -766,7 +776,7 @@
           },
           {
             x: 450,
-            y: 370,
+            y: 445,
             text: 'Next Level',
             type: 'nextLevel',
             width: 300,
@@ -844,10 +854,10 @@
         ctx.fillText(`Enemies Left: ${this.game.enemies.length + this.game.spawnQueue.length}`, 10, 700);
          // Draw buttons
         this.buttonManager.draw(ctx);
-        // Draw selected tower info
-        if (this.game.selectedTowerInstance) {
-          ctx.fillText(`Selected: ${CONSTANTS.TOWER_TYPES[this.game.selectedTowerInstance.type].name} Lv${this.game.selectedTowerInstance.level}`, 420, 730);
-        }
+        // // Draw selected tower info
+        // if (this.game.selectedTowerInstance) {
+        //   ctx.fillText(`Selected: ${CONSTANTS.TOWER_TYPES[this.game.selectedTowerInstance.type].name} Lv${this.game.selectedTowerInstance.level}`, 420, 730);
+        // }
       }
 
       // Show tower placement preview
@@ -870,7 +880,7 @@
         ctx.font = '60px Arial';
         ctx.fillText('Level Complete!', this.game.canvas.width / 2, this.game.canvas.height / 2 - 60);
         ctx.font = '20px Arial';
-        // ctx.fillText('Proceed to next level, enter endless mode, or retry.', this.game.canvas.width / 2, this.game.canvas.height / 2);
+        ctx.fillText('Proceed to next level, enter endless mode, or retry level', this.game.canvas.width / 2, this.game.canvas.height / 2);
         ctx.restore();
         this.buttonManager.buttons.filter(button => ['endless', 'nextLevel', 'retryWin'].includes(button.type)).forEach(button => button.draw(ctx, button.towerIndex));
       }
@@ -885,7 +895,7 @@
         ctx.font = '60px Arial';
         ctx.fillText('Game Over', this.game.canvas.width / 2, this.game.canvas.height / 2 - 30);
         ctx.font = '20px Arial';
-        // ctx.fillText('Click anywhere to restart', this.game.canvas.width / 2, this.game.canvas.height / 2 + 20);
+        ctx.fillText('You can always retry the level', this.game.canvas.width / 2, this.game.canvas.height / 2 + 20);
         ctx.restore();
         this.buttonManager.draw(ctx, 'retry'); // Draw retry button
       }
@@ -1325,13 +1335,9 @@
           
           if (e.button === 0) { // Left click
             if (this.gameState === 'win') {
-              if (!this.ui.buttonManager.handleButtonClick(x, y)) {
-                this.resetGame('nextLevel');
-              }
+              this.ui.buttonManager.handleButtonClick(x, y);
             } else if (this.gameState === 'gameover') {
-              if (!this.ui.buttonManager.handleButtonClick(x, y)) {
-                this.resetGame('full');
-              }
+              this.ui.buttonManager.handleButtonClick(x, y);
             } else {
               if (this.ui.buttonManager.handleButtonClick(x, y)) {
                 return;
